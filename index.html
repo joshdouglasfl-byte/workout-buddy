@@ -273,7 +273,7 @@ function voiceStart(why) {
   try { V.rec && V.rec.abort(); } catch {}
   const r = new SR(); V.rec = r;
   r.lang = 'en-US'; r.continuous = true; r.interimResults = true;
-  r.onstart = () => { V.on = true; V.prev = []; micUI(); vlog('', 'mic on' + (why ? ' (' + why + ')' : '')); };
+  r.onstart = () => { V.on = true; V.prev = []; V.startedAt = Date.now(); micUI(); if (!V.quickStops) vlog('', 'mic on' + (why ? ' (' + why + ')' : '')); };
   r.onresult = e => {
     let text = '';
     for (let i = 0; i < e.results.length; i++) text += ' ' + e.results[i][0].transcript;
@@ -295,17 +295,26 @@ function voiceStart(why) {
     V.timer = setTimeout(() => decide(V.utt.slice()), 450);  // short wait to see if more words follow
   };
   r.onerror = e => {
-    vlog('', 'mic error: ' + e.error);
+    if (e.error !== 'no-speech' && e.error !== 'aborted') vlog('', 'mic error: ' + e.error);
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; toast('Microphone not allowed'); }
   };
-  r.onend = () => { V.on = false; micUI(); vlog('', 'mic stopped'); if (V.want) setTimeout(() => { try { voiceStart('auto restart'); } catch (err) { vlog('', 'restart failed: ' + err.message); } }, 300); };
+  r.onend = () => {
+    V.on = false; micUI();
+    const ran = Date.now() - (V.startedAt || 0);
+    if (ran < 3000) V.quickStops = (V.quickStops || 0) + 1; else { if (V.quickStops) vlog('', `mic had ${V.quickStops} quick stops`); V.quickStops = 0; vlog('', `mic stopped after ${Math.round(ran / 1000)}s`); }
+    if (V.quickStops >= 4) {               // it keeps failing: stop retrying until the mic badge is tapped
+      vlog('', 'mic keeps stopping, waiting for a tap'); V.want = false; V.quickStops = 0;
+      const el = document.getElementById('mic'); el.className = 'pill warn'; el.textContent = '🎙 tap to listen'; return;
+    }
+    if (V.want) setTimeout(() => { try { voiceStart('auto restart'); } catch (err) { vlog('', 'restart failed: ' + err.message); } }, 300);
+  };
   try { r.start(); } catch (err) { vlog('', 'start failed: ' + err.message); }
 }
 // if the mic quietly dropped, bring it back
 setInterval(() => { if (V.want && !V.on) voiceStart('watchdog'); }, 4000);
 function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
 function micUI() { const el = document.getElementById('mic'); el.className = 'pill' + (V.on ? ' on' : ''); el.textContent = V.on ? '🎙 listening' : '🎙 off'; }
-document.getElementById('mic').onclick = () => { unlockAudio(); V.on ? voiceStop() : voiceStart('tap'); };
+document.getElementById('mic').onclick = () => { unlockAudio(); V.quickStops = 0; V.on ? voiceStop() : voiceStart('tap'); };
 const FILLER = new Set(['uh', 'um', 'umm', 'hmm', 'so', 'and', 'the', 'oh', 'ah', 'like', 'please', 'now']);
 // Command words that count on their own inside a short phrase ("ready ready ready", "okay go")
 const WORD = { ready: /^(ready|go|start|begin|redi)$/, done: /^(done|dun|dunn|dona|don|finished|finish)$/, skip: /^skip$/, yes: /^(yes|yeah|yep|okay|ok|running|good|save|sure)$/, no: /^(no|nope|wait|later)$/, next: /^next$/ };
