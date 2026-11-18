@@ -69,6 +69,7 @@ function append_(ss, name, rows) {
   if (!ID_COL[name]) throw new Error('cannot append to ' + name);
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
+  let fresh = [], result;
   try {
     const sh = ss.getSheetByName(name);
     const idc = ID_COL[name], w = WIDTH[name];
@@ -78,12 +79,12 @@ function append_(ss, name, rows) {
       const from = Math.max(2, last - 2000);
       sh.getRange(from, idc, last - from + 1, 1).getValues().forEach(r => { if (r[0]) have.add(String(r[0])); });
     }
-    const fresh = rows.filter(r => r.length === w && r[w - 1] && !have.has(String(r[w - 1])));
+    fresh = rows.filter(r => r.length === w && r[w - 1] && !have.has(String(r[w - 1])));
     if (fresh.length) {
       const range = sh.getRange(last + 1, 1, fresh.length, w);
       range.setValues(fresh);
     }
-    var result = { added: fresh.length, skipped: rows.length - fresh.length };
+    result = { added: fresh.length, skipped: rows.length - fresh.length };
   } finally {
     lock.releaseLock();
   }
