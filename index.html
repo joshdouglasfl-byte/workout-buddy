@@ -333,6 +333,12 @@ function decide(utt) {
   const uniq = [...new Set(toks)];
   if (uniq.length > 4) return vlog(heard, 'ignored: sounded like talking');
   const h = V.handlers || {}, phrase = toks.join(' ');
+  // button words first (save/skip/clear), then a screen's own number parser
+  if (V.customDecide) {
+    const k = uniq.length <= 2 && Object.keys(SAYMAP).find(x => uniq.includes(x));
+    if (k) { V.utt = []; vlog(heard, 'pressed: ' + k); SAYMAP[k].click(); return; }
+    const did = V.customDecide(toks); if (did) { V.utt = []; return vlog(heard, 'did: ' + did); }
+  }
   const fire = (k, fn) => { V.utt = []; if (V.speaking) try { speechSynthesis.cancel(); } catch {} vlog(heard, 'did: ' + k); fn(); };
   for (const k of Object.keys(SAY)) if (h[k] && SAY[k].test(phrase)) return fire(k, h[k]);
   if (uniq.length <= 3) for (const w of uniq) for (const k of Object.keys(WORD)) if (h[k] && WORD[k].test(w)) return fire(k, h[k]);
@@ -412,7 +418,7 @@ function event(type, exName = '', joint = '', reason = '', detail = '') {
 
 // ---------- screens ----------
 let CUR = null;   // the set in progress
-function screen(html, handlers) { $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
+function screen(html, handlers) { V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
 function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
 
 function showSetup() {
@@ -762,10 +768,49 @@ function endFlow() {
 function watchEnd(next) {
   if (setting('Watch Reminder', 'Yes') !== 'Yes') return next();
   speak('Stop your Apple Watch workout.');
-  screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>End your Apple Watch workout</h1><p class="dim" style="font-size:26px">Swipe right on the watch and tap End, so the calories save to Health.</p>
+  screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>End your Apple Watch workout</h1><p class="dim" style="font-size:26px">Swipe right on the watch and tap End. Keep the summary showing for the next step.</p>
     <button class="go mt" id="ok" style="width:70%" data-say="stopped">Watch is stopped</button><div class="heard"></div></div>`, { yes: ok });
-  function ok() { event('watch_end', '', '', '', 'watch stopped'); next(); }
+  function ok() { event('watch_end', '', '', '', 'watch stopped'); caloriesScreen(next); }
   on('ok', ok);
+}
+// Active calories from the watch summary; the nightly trainer adds them to Lose It!
+function parseCalories(toks) {
+  const small = Object.assign({}, NUMW, { thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 });
+  let total = 0, cur = 0, any = false, hundred = false;
+  for (const w of toks) {
+    if (/^\d+$/.test(w)) { cur += +w; any = true; }
+    else if (w === 'hundred') { cur = (cur || 1) * 100; any = true; hundred = true; }
+    else if (small[w] != null && !['to', 'too', 'for', 'none'].includes(w)) {
+      const v = small[w];
+      if (cur > 0 && cur < 10 && v >= 10 && !hundred) cur = cur * 100 + v;   // "one twenty" = 120
+      else cur += v;
+      any = true;
+    }
+  }
+  total += cur;
+  return any && total > 0 && total < 3000 ? total : null;
+}
+function caloriesScreen(next) {
+  let cal = '';
+  const draw = () => { document.getElementById('cv').textContent = cal || '—'; };
+  speak('How many active calories?');
+  screen(`<div class="center"><h2>Active calories on the watch summary?</h2>
+    <div class="huge" id="cv">—</div>
+    <div class="grid2 mt" style="grid-template-columns:repeat(5,1fr)">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map(d => `<button class="sm" data-d="${d}" data-say="-">${d}</button>`).join('')}</div>
+    <div class="row mt"><button class="sm" id="clr" data-say="clear">Clear</button><button class="go" id="save" data-say="save">Save</button><button class="sm" id="skip" data-say="skip">Skip</button></div><div class="heard"></div></div>`,
+    { number: () => {} });
+  // spoken numbers can be several words ("one twenty", "one hundred twenty", "120")
+  V.handlers = { custom: true };
+  V.customDecide = toks => { const n = parseCalories(toks); if (n) { cal = String(n); draw(); return 'calories ' + n; } return null; };
+  document.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { if (cal.length < 4) cal += b.dataset.d; draw(); });
+  on('clr', () => { cal = ''; draw(); });
+  on('save', () => {
+    if (!cal) return toast('Enter the calories or tap Skip');
+    const mins = SESSION ? Math.round((Date.now() - SESSION.start) / 60000) : '';
+    event('watch_calories', '', '', cal, `${mins} min, ${SESSION ? SESSION.log.length : 0} sets, not yet in Lose It`);
+    V.customDecide = null; toast(`${cal} calories saved for Lose It!`); next();
+  });
+  on('skip', () => { V.customDecide = null; event('watch_calories', '', '', '', 'skipped'); next(); });
 }
 function summary() {
   clearInterval(restTimer);
