@@ -603,17 +603,17 @@ function rest(tweak) {
   if (p) {
     nextName = p.ex.name;
     const same = p.ex.name === CUR.name;
-    const w = same && tweak ? tweak.w : weightFor(p.ex, n.sets).w;
+    const w = same ? CUR.weight : weightFor(p.ex, n.sets).w;
     const chg = [];
     if (!same && p.ex.equip !== CUR.ex.equip) chg.push(p.ex.equip);
     if (w !== CUR.weight && w != null) chg.push(`${fmtW(w)} dumbbell${p.ex.oneSide ? '' : 's'}`);
-    nextHtml = `<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big">${fmtW(w)}</div>${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}<div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>`;
+    nextHtml = `<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big" id="nw">${fmtW(w)}</div><div id="nchg">${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}</div><div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>`;
   }
   screen(`<div class="row"><div class="card center" style="flex:0 0 300px"><h3>Rest</h3><div class="huge" id="rc">${secs}</div></div><div class="card">${nextHtml}</div></div>
     ${tweak && p && p.ex.name === CUR.name ? `<div class="card"><b>${tweak.msg} ${fmtW(tweak.w)}?</b><div class="row mt"><button class="sm go" id="ty">Yes, change it</button><button class="sm" id="tn">Keep ${fmtW(CUR.weight)}</button></div></div>` : ''}
     <div class="row"><button class="go" id="go">Ready</button><button id="skip">Skip that</button><button class="stop" id="end">End session</button></div><div class="heard center"></div>`,
     { ready: goNext, skip: () => nextName && skipFlow(nextName), end: endFlow, next: goNext });
-  if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
+  if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
   on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
   clearInterval(restTimer);
   let rung = false;
