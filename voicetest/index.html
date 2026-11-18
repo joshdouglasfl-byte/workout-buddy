@@ -26,13 +26,16 @@
 </style>
 </head>
 <body>
-<h1>Voice test</h1>
-<div class="sub">Tap Start, then say: <b>ready</b>, <b>done</b>, <b>what's next</b>, <b>skip</b>. Try from where you'd stand to lift, and with music on.</div>
+<h1>Voice test v2</h1>
+<div class="sub">1) Tap Start. 2) Five times: tap the blue Delay test button and say "done" at the same moment. 3) Say a few commands from where you lift. 4) Stay silent for 60 seconds and watch whether the timer keeps counting. 5) Copy report.</div>
 
 <div id="status">Checking support…</div>
 <div class="row">
   <button id="start" class="green">Start listening</button>
   <button id="stop" class="red">Stop</button>
+</div>
+<div class="row">
+  <button id="tap" style="font-size:30px">Delay test: tap while saying "done"</button>
 </div>
 <div class="row">
   <button id="speak" class="gray">Test iPad voice</button>
@@ -44,7 +47,7 @@
 
 <div class="stats">
   <div class="stat"><b id="sCmds">0</b><span>commands caught</span></div>
-  <div class="stat"><b id="sLat">–</b><span>avg delay (s)</span></div>
+  <div class="stat"><b id="sLat">–</b><span>avg delay test (s)</span></div>
   <div class="stat"><b id="sStops">0</b><span>times it stopped</span></div>
   <div class="stat"><b id="sRestart">0</b><span>auto-restarts OK</span></div>
 </div>
@@ -60,7 +63,8 @@
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const t0 = performance.now();
   const stats = { cmds:0, lat:[], stops:0, restarts:0, restartFails:0, errors:{} , heard:[] };
-  let rec = null, listening = false, handsFree = false, speechStart = 0;
+  let stopRequested = false;
+  let rec = null, listening = false, handsFree = false, speechStart = 0, tapAt = 0, seen = [], listenStart = 0;
 
   const COMMANDS = [
     { name:'READY', re:/\b(ready|go|start)\b/ },
@@ -88,7 +92,7 @@
       speechRecognition: !!SR, speechSynthesis: 'speechSynthesis' in window,
       commandsCaught: stats.cmds,
       avgDelaySec: stats.lat.length ? +(stats.lat.reduce((a,b)=>a+b,0)/stats.lat.length).toFixed(2) : null,
-      stops: stats.stops, autoRestartsOk: stats.restarts, autoRestartsFailed: stats.restartFails,
+      stops: stats.stops, stoppedOnItsOwn: stats.selfStops||0, longestListenSec: Math.round(stats.longest||0), autoRestartsOk: stats.restarts, autoRestartsFailed: stats.restartFails,
       errors: stats.errors, lastHeard: stats.heard.slice(-15)
     }, null, 1);
   }
@@ -108,16 +112,23 @@
     r.continuous = true;
     r.interimResults = true;
     r.maxAlternatives = 3;
-    r.onstart = () => { listening = true; setStatus('🎙️ Listening…', 'var(--ok)'); log('start'); };
-    r.onspeechstart = () => { speechStart = performance.now(); };
+    r.onstart = () => { seen = []; lastWordCount = 0; listenStart = performance.now(); listening = true; setStatus('🎙️ Listening…', 'var(--ok)'); log('start'); };
+    
     r.onresult = (e) => {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
-        const alts = Array.from(res).map(a => a.transcript.toLowerCase().trim());
-        $('heard').textContent = alts[0];
-        if (!res.isFinal && !matchCmd(alts, false)) continue;
-        if (res.isFinal) { stats.heard.push(alts[0]); log(`heard (final): "${alts.join(' | ')}"`); }
-        matchCmd(alts, true);
+        const text = res[0].transcript.toLowerCase().trim();
+        $('heard').textContent = text;
+        const prev = seen[i] || '';
+        // only look at words added since last time for this result
+        const prevWords = prev ? prev.split(/\s+/).length : 0;
+        const words = text.split(/\s+/);
+        if (words.length > prevWords) {
+          const fresh = words.slice(Math.max(0, prevWords - 1)).join(' '); // include last word in case it changed
+          matchCmd(fresh, words.length);
+        }
+        seen[i] = text;
+        if (res.isFinal) { stats.heard.push(text); log(`heard (final): "${text}"`); }
       }
     };
     r.onerror = (e) => {
@@ -127,7 +138,9 @@
     };
     r.onend = () => {
       listening = false; stats.stops++; render();
-      log('end (recognition stopped)');
+      const dur = ((performance.now()-listenStart)/1000); stats.longest = Math.max(stats.longest||0, dur);
+      log(`end (recognition stopped after ${dur.toFixed(0)}s, ${stopRequested ? 'you tapped Stop' : 'it stopped ON ITS OWN'})`);
+      if (!stopRequested) stats.selfStops = (stats.selfStops||0)+1; stopRequested = false;
       if (handsFree) {
         setTimeout(() => {
           try { rec = makeRec(); rec.start(); stats.restarts++; log('auto-restart attempted'); }
@@ -139,22 +152,26 @@
     return r;
   }
 
-  let lastCmdAt = 0;
-  function matchCmd(alts, commit) {
-    for (const a of alts) for (const c of COMMANDS) if (c.re.test(a)) {
+  let lastCmdAt = 0, lastWordCount = 0;
+  function matchCmd(fresh, wordCount) {
+    for (const c of COMMANDS) if (c.re.test(fresh)) {
+      if (wordCount === lastWordCount) return;  // same word re-reported
+      lastWordCount = wordCount;
       const now = performance.now();
-      if (now - lastCmdAt < 1200) return true;   // de-dupe interim+final
       lastCmdAt = now;
       stats.cmds++;
-      if (speechStart) stats.lat.push((now - speechStart)/1000);
+      if (tapAt && now - tapAt < 6000) {
+        const d = (now - tapAt) / 1000;
+        stats.lat.push(d); log(`DELAY tap→command: ${d.toFixed(2)}s`);
+        tapAt = 0;
+      }
       $('cmd').textContent = c.name;
       $('cmd').style.background = '#1f4d2e';
       setTimeout(() => $('cmd').style.background = '#1b1b1b', 600);
-      log(`COMMAND ${c.name}  ("${a}")`);
+      log(`COMMAND ${c.name}  ("${fresh}")`);
       render();
-      return true;
+      return;
     }
-    return false;
   }
 
   $('start').onclick = () => {
@@ -163,9 +180,12 @@
     rec = makeRec();
     try { rec.start(); } catch (err) { log('start failed: ' + err.message); }
   };
-  $('stop').onclick = () => { handsFree = false; updateHF(); try { rec && rec.stop(); } catch {} };
+  $('stop').onclick = () => { stopRequested = true; handsFree = false; updateHF(); try { rec && rec.stop(); } catch {} };
   function updateHF() { $('handsfree').textContent = 'Hands-free: ' + (handsFree ? 'ON' : 'OFF'); $('handsfree').className = handsFree ? '' : 'gray'; }
   $('handsfree').onclick = () => { handsFree = !handsFree; updateHF(); log('hands-free ' + (handsFree?'on':'off')); };
+
+  $('tap').onclick = () => { tapAt = performance.now(); log('delay test: tapped'); };
+  setInterval(() => { if (listening) $('status').textContent = `🎙️ Listening… ${((performance.now()-listenStart)/1000).toFixed(0)}s`; }, 1000);
 
   $('speak').onclick = () => {
     if (!('speechSynthesis' in window)) { log('speechSynthesis missing'); return; }
