@@ -127,3 +127,7 @@ function updateExercise_(ss, exercise, field, value) {
   return { updated: false };
 }
 
+// Run once from the editor so Google asks for the 'connect to an external service' permission.
+function authorizeOutsideCalls() {
+  UrlFetchApp.fetch('https://www.google.com', { muteHttpExceptions: true });
+}
