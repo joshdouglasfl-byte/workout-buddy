@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Workout Buddy – Voice Test</title>
+<style>
+  :root { --bg:#111; --fg:#f2f2f2; --dim:#888; --ok:#3ecf6e; --warn:#f2b33d; --bad:#ef5350; --acc:#4aa3ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:20px/1.4 -apple-system, system-ui, sans-serif; padding:24px; }
+  h1 { font-size:34px; margin:0 0 6px; }
+  .sub { color:var(--dim); margin-bottom:20px; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
+  button { font:inherit; font-size:26px; font-weight:600; border:0; border-radius:18px; padding:26px 30px; color:#000; background:var(--acc); flex:1; min-width:220px; }
+  button.green { background:var(--ok); } button.red { background:var(--bad); color:#fff; } button.gray { background:#333; color:var(--fg); }
+  #status { font-size:28px; font-weight:700; padding:16px 20px; border-radius:14px; background:#222; margin-bottom:16px; }
+  #heard { font-size:30px; min-height:48px; padding:12px 20px; background:#1b1b1b; border-radius:14px; margin-bottom:16px; }
+  #cmd { font-size:64px; font-weight:800; text-align:center; padding:20px; border-radius:18px; background:#1b1b1b; margin-bottom:16px; min-height:110px; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
+  .stat { background:#1b1b1b; border-radius:14px; padding:12px; text-align:center; }
+  .stat b { display:block; font-size:34px; }
+  .stat span { color:var(--dim); font-size:16px; }
+  #log { font:15px/1.4 ui-monospace, Menlo, monospace; background:#0a0a0a; border-radius:12px; padding:12px; height:260px; overflow:auto; white-space:pre-wrap; }
+  #report { font:15px/1.4 ui-monospace, Menlo, monospace; width:100%; height:120px; background:#0a0a0a; color:var(--fg); border:1px solid #333; border-radius:12px; padding:10px; }
+</style>
+</head>
+<body>
+<h1>Voice test</h1>
+<div class="sub">Tap Start, then say: <b>ready</b>, <b>done</b>, <b>what's next</b>, <b>skip</b>. Try from where you'd stand to lift, and with music on.</div>
+
+<div id="status">Checking support…</div>
+<div class="row">
+  <button id="start" class="green">Start listening</button>
+  <button id="stop" class="red">Stop</button>
+</div>
+<div class="row">
+  <button id="speak" class="gray">Test iPad voice</button>
+  <button id="handsfree" class="gray">Hands-free: OFF</button>
+</div>
+
+<div id="cmd">—</div>
+<div id="heard">&nbsp;</div>
+
+<div class="stats">
+  <div class="stat"><b id="sCmds">0</b><span>commands caught</span></div>
+  <div class="stat"><b id="sLat">–</b><span>avg delay (s)</span></div>
+  <div class="stat"><b id="sStops">0</b><span>times it stopped</span></div>
+  <div class="stat"><b id="sRestart">0</b><span>auto-restarts OK</span></div>
+</div>
+
+<div id="log"></div>
+<p class="sub">When you're done, tap Copy report and paste it to Claude.</p>
+<div class="row"><button id="copy" class="gray">Copy report</button></div>
+<textarea id="report" readonly></textarea>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const t0 = performance.now();
+  const stats = { cmds:0, lat:[], stops:0, restarts:0, restartFails:0, errors:{} , heard:[] };
+  let rec = null, listening = false, handsFree = false, speechStart = 0;
+
+  const COMMANDS = [
+    { name:'READY', re:/\b(ready|go|start)\b/ },
+    { name:'DONE', re:/\b(done|finished|stop set)\b/ },
+    { name:"WHAT'S NEXT", re:/\b(what'?s next|what is next|next)\b/ },
+    { name:'SKIP', re:/\bskip\b/ },
+  ];
+
+  function log(msg) {
+    const s = ((performance.now()-t0)/1000).toFixed(1).padStart(6);
+    $('log').textContent += `${s}s  ${msg}\n`;
+    $('log').scrollTop = 1e9;
+    buildReport();
+  }
+  function setStatus(text, color) { $('status').textContent = text; $('status').style.color = color || 'var(--fg)'; }
+  function render() {
+    $('sCmds').textContent = stats.cmds;
+    $('sLat').textContent = stats.lat.length ? (stats.lat.reduce((a,b)=>a+b,0)/stats.lat.length).toFixed(1) : '–';
+    $('sStops').textContent = stats.stops;
+    $('sRestart').textContent = stats.restarts + (stats.restartFails ? ` / ${stats.restartFails} failed` : '');
+  }
+  function buildReport() {
+    $('report').value = JSON.stringify({
+      ua: navigator.userAgent,
+      speechRecognition: !!SR, speechSynthesis: 'speechSynthesis' in window,
+      commandsCaught: stats.cmds,
+      avgDelaySec: stats.lat.length ? +(stats.lat.reduce((a,b)=>a+b,0)/stats.lat.length).toFixed(2) : null,
+      stops: stats.stops, autoRestartsOk: stats.restarts, autoRestartsFailed: stats.restartFails,
+      errors: stats.errors, lastHeard: stats.heard.slice(-15)
+    }, null, 1);
+  }
+
+  if (!SR) {
+    setStatus('❌ Speech recognition NOT available in this browser', 'var(--bad)');
+    $('start').disabled = true;
+  } else {
+    setStatus('✅ Speech recognition available. Tap Start.', 'var(--ok)');
+  }
+  log(`UA: ${navigator.userAgent}`);
+  log(`SpeechRecognition: ${!!SR}, speechSynthesis: ${'speechSynthesis' in window}`);
+
+  function makeRec() {
+    const r = new SR();
+    r.lang = 'en-US';
+    r.continuous = true;
+    r.interimResults = true;
+    r.maxAlternatives = 3;
+    r.onstart = () => { listening = true; setStatus('🎙️ Listening…', 'var(--ok)'); log('start'); };
+    r.onspeechstart = () => { speechStart = performance.now(); };
+    r.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        const alts = Array.from(res).map(a => a.transcript.toLowerCase().trim());
+        $('heard').textContent = alts[0];
+        if (!res.isFinal && !matchCmd(alts, false)) continue;
+        if (res.isFinal) { stats.heard.push(alts[0]); log(`heard (final): "${alts.join(' | ')}"`); }
+        matchCmd(alts, true);
+      }
+    };
+    r.onerror = (e) => {
+      stats.errors[e.error] = (stats.errors[e.error]||0)+1;
+      log(`error: ${e.error}`);
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { handsFree = false; updateHF(); setStatus('❌ Mic permission denied: ' + e.error, 'var(--bad)'); }
+    };
+    r.onend = () => {
+      listening = false; stats.stops++; render();
+      log('end (recognition stopped)');
+      if (handsFree) {
+        setTimeout(() => {
+          try { rec = makeRec(); rec.start(); stats.restarts++; log('auto-restart attempted'); }
+          catch (err) { stats.restartFails++; log('auto-restart FAILED: ' + err.message); setStatus('⚠️ Stopped – tap Start', 'var(--warn)'); }
+          render();
+        }, 250);
+      } else setStatus('⏸ Stopped – tap Start', 'var(--warn)');
+    };
+    return r;
+  }
+
+  let lastCmdAt = 0;
+  function matchCmd(alts, commit) {
+    for (const a of alts) for (const c of COMMANDS) if (c.re.test(a)) {
+      const now = performance.now();
+      if (now - lastCmdAt < 1200) return true;   // de-dupe interim+final
+      lastCmdAt = now;
+      stats.cmds++;
+      if (speechStart) stats.lat.push((now - speechStart)/1000);
+      $('cmd').textContent = c.name;
+      $('cmd').style.background = '#1f4d2e';
+      setTimeout(() => $('cmd').style.background = '#1b1b1b', 600);
+      log(`COMMAND ${c.name}  ("${a}")`);
+      render();
+      return true;
+    }
+    return false;
+  }
+
+  $('start').onclick = () => {
+    if (!SR) return;
+    try { if (rec) rec.abort(); } catch {}
+    rec = makeRec();
+    try { rec.start(); } catch (err) { log('start failed: ' + err.message); }
+  };
+  $('stop').onclick = () => { handsFree = false; updateHF(); try { rec && rec.stop(); } catch {} };
+  function updateHF() { $('handsfree').textContent = 'Hands-free: ' + (handsFree ? 'ON' : 'OFF'); $('handsfree').className = handsFree ? '' : 'gray'; }
+  $('handsfree').onclick = () => { handsFree = !handsFree; updateHF(); log('hands-free ' + (handsFree?'on':'off')); };
+
+  $('speak').onclick = () => {
+    if (!('speechSynthesis' in window)) { log('speechSynthesis missing'); return; }
+    const u = new SpeechSynthesisUtterance('Next up: squats. Forty pound dumbbells. Say ready when you are set.');
+    u.rate = 1.0;
+    u.onend = () => log('TTS finished');
+    u.onerror = (e) => log('TTS error: ' + e.error);
+    speechSynthesis.speak(u);
+    log('TTS speaking');
+  };
+
+  $('copy').onclick = async () => {
+    buildReport();
+    try { await navigator.clipboard.writeText($('report').value); log('report copied'); }
+    catch { $('report').select(); log('copy blocked – select the text box and copy manually'); }
+  };
+  buildReport();
+})();
+</script>
+</body>
+</html>
