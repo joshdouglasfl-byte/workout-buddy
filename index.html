@@ -71,7 +71,8 @@ function toast(t) { const el = document.getElementById('toast'); el.textContent 
   const h = location.hash;
   if (h.startsWith('#setup=')) {
     try { const cfg = JSON.parse(atob(h.slice(7).replace(/-/g, '+').replace(/_/g, '/'))); if (cfg.url && cfg.key) LS.set('cfg', cfg); } catch {}
-    history.replaceState(null, '', location.pathname);
+    // keep the link in Safari so "Add to Home Screen" carries it; clear it once running from the Home Screen
+    if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) history.replaceState(null, '', location.pathname);
   }
 })();
 let CFG = LS.get('cfg', null);
