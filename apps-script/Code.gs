@@ -83,10 +83,34 @@ function append_(ss, name, rows) {
       const range = sh.getRange(last + 1, 1, fresh.length, w);
       range.setValues(fresh);
     }
-    return { added: fresh.length, skipped: rows.length - fresh.length };
+    var result = { added: fresh.length, skipped: rows.length - fresh.length };
   } finally {
     lock.releaseLock();
   }
+  // New watch calories: start the instant Lose It! sync right away (hourly task is the backup)
+  if (name === 'Events') {
+    const cal = fresh.filter(r => r[2] === 'watch_calories' && String(r[5]).trim() !== '');
+    if (cal.length) result.fired = fireLoseItSync_(ss, cal);
+  }
+  return result;
+}
+
+function fireLoseItSync_(ss, rows) {
+  const props = PropertiesService.getScriptProperties();
+  const url = props.getProperty('FIRE_URL'), token = props.getProperty('FIRE_TOKEN');
+  if (!url || !token) return 'not set up';
+  let code, note;
+  try {
+    const res = UrlFetchApp.fetch(url, {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'Authorization': 'Bearer ' + token, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'experimental-cc-routine-2026-04-01' },
+      payload: JSON.stringify({ text: 'New watch calories saved: ' + rows.map(r => r[5] + ' cal (Row ID ' + r[7] + ')').join(', ') })
+    });
+    code = res.getResponseCode(); note = code < 300 ? 'started' : String(res.getContentText()).slice(0, 200);
+  } catch (err) { code = 'error'; note = String(err).slice(0, 200); }
+  // record the attempt so a failed start is visible in the sheet
+  ss.getSheetByName('Events').appendRow([Utilities.formatDate(new Date(), 'America/New_York', 'yyyy-MM-dd HH:mm:ss'), rows[0][1], 'loseit_fire', '', '', String(code), note, 'lf-' + Date.now()]);
+  return String(code);
 }
 
 // Change one field of one exercise (for example Tempo after a tempo check).
