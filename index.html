@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Workout Buddy">
+<title>Workout Buddy</title>
+<style>
+:root{--bg:#0f1115;--card:#1a1d24;--card2:#232731;--fg:#f4f5f7;--dim:#9aa1ad;--acc:#4aa3ff;--ok:#38c172;--warn:#f5b53d;--bad:#ef5350;--r:22px}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:22px/1.35 -apple-system,system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#top{display:flex;align-items:center;gap:14px;padding:12px 22px;font-size:18px;color:var(--dim)}
+#top .sp{flex:1}
+.pill{padding:6px 14px;border-radius:99px;background:var(--card);color:var(--dim)}
+.pill.on{background:#16391f;color:var(--ok)} .pill.warn{background:#3d2f10;color:var(--warn)} .pill.bad{background:#3d1514;color:var(--bad)}
+#app{padding:4px 22px 22px}
+h1{font-size:52px;margin:6px 0 4px;line-height:1.05} h2{font-size:30px;margin:4px 0 12px} h3{font-size:22px;margin:0 0 6px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.big{font-size:84px;font-weight:800;line-height:1}
+.huge{font-size:150px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.dim{color:var(--dim)} .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+.card{background:var(--card);border-radius:var(--r);padding:20px 24px;margin-bottom:16px}
+.row{display:flex;gap:16px;flex-wrap:wrap} .row>*{flex:1}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+button{font:inherit;font-weight:700;font-size:30px;border:0;border-radius:var(--r);padding:28px 20px;background:var(--card2);color:var(--fg);min-height:96px;touch-action:manipulation}
+button:active{transform:scale(.98);filter:brightness(1.2)}
+button.go{background:var(--ok);color:#06210f} button.pri{background:var(--acc);color:#04182b} button.stop{background:var(--bad);color:#fff} button.sm{font-size:22px;min-height:64px;padding:14px 18px}
+button.sel{outline:4px solid var(--acc)}
+.chips{display:flex;gap:12px;flex-wrap:wrap} .chips button{flex:1 1 30%}
+.setup{font-size:26px} .cue{font-size:22px;color:var(--dim);margin-top:8px}
+.change{background:#3d2f10;color:var(--warn);border-radius:14px;padding:10px 16px;margin-top:12px;font-weight:700}
+.bar{height:16px;background:var(--card2);border-radius:99px;overflow:hidden} .bar>i{display:block;height:100%;background:var(--acc)}
+.exrow{display:flex;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid #2a2e38;font-size:20px} .exrow .n{flex:0 0 260px} .exrow .bar{flex:1} .exrow .c{flex:0 0 80px;text-align:right}
+#tempo{position:relative;height:300px;width:110px;background:var(--card2);border-radius:20px;overflow:hidden;margin:0 auto}
+#tempo i{position:absolute;left:0;right:0;bottom:0;background:var(--acc);border-radius:20px}
+#tempoLbl{text-align:center;font-size:24px;font-weight:800;margin-top:10px;letter-spacing:.08em}
+.heard{font-size:18px;color:var(--dim);min-height:24px;margin-top:8px}
+.toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:#222833;padding:14px 24px;border-radius:16px;font-size:20px;opacity:0;transition:.3s;pointer-events:none}
+.toast.show{opacity:1}
+input{font:inherit;font-size:22px;width:100%;padding:16px;border-radius:14px;border:1px solid #333;background:#0b0c10;color:var(--fg);-webkit-user-select:text;user-select:text}
+.center{text-align:center}
+.mt{margin-top:16px}
+</style>
+</head>
+<body>
+<div id="top"><b>Workout Buddy</b><span class="sp"></span><span id="sync" class="pill">…</span><span id="mic" class="pill">🎙 off</span></div>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+<script>
+'use strict';
+// ---------- small helpers ----------
+const $app = document.getElementById('app');
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem('wb.' + k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('wb.' + k, JSON.stringify(v)); } catch {} }
+};
+const num = x => { const n = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
+const pad = n => String(n).padStart(2, '0');
+const dstr = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const tstr = d => `${dstr(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const parseDate = s => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/); if (!m) return null; return new Date(+m[1], m[2] - 1, +m[3], +(m[4] || 12), +(m[5] || 0), +(m[6] || 0)); };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const HOUR = 3600e3, DAY = 24 * HOUR;
+function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2500); }
+
+// ---------- config & setup link ----------
+(function readSetupHash() {
+  const h = location.hash;
+  if (h.startsWith('#setup=')) {
+    try { const cfg = JSON.parse(atob(h.slice(7).replace(/-/g, '+').replace(/_/g, '/'))); if (cfg.url && cfg.key) LS.set('cfg', cfg); } catch {}
+    history.replaceState(null, '', location.pathname);
+  }
+})();
+let CFG = LS.get('cfg', null);
+
+// ---------- data ----------
+let S = LS.get('state', null);      // last state from the sheet
+let outbox = LS.get('outbox', []);  // rows not yet saved to the sheet
+let local = LS.get('local', { tempoChecked: {}, lastSideFlip: 0 });
+let lastLoad = 0;
+
+async function api(body) {
+  const r = await fetch(CFG.url, { method: 'POST', body: JSON.stringify(Object.assign({ key: CFG.key }, body)) });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || 'error');
+  return j;
+}
+async function loadState(quiet) {
+  if (!CFG) return;
+  try { S = await api({ action: 'state' }); LS.set('state', S); lastLoad = Date.now(); setSync(); if (!quiet) toast('Plan loaded'); }
+  catch (e) { setSync('offline'); if (!quiet) toast('Could not reach the sheet, using saved copy'); }
+}
+function queue(sheet, row) { outbox.push({ sheet, row }); LS.set('outbox', outbox); setSync(); flush(); }
+let flushing = false;
+async function flush() {
+  if (flushing || !outbox.length || !CFG) return;
+  flushing = true;
+  try {
+    for (const sheet of ['Sets', 'Events', 'Progress']) {
+      const rows = outbox.filter(o => o.sheet === sheet).map(o => o.row);
+      if (!rows.length) continue;
+      await api({ action: 'append', sheet, rows });
+      const ids = new Set(rows.map(r => r[r.length - 1]));
+      // keep a local copy so counts stay right until the next full load
+      if (S) {
+        const key = sheet.toLowerCase();
+        S[key] = (S[key] || []).concat(rows.map(r => rowToObj(sheet, r)));
+      }
+      outbox = outbox.filter(o => !(o.sheet === sheet && ids.has(o.row[o.row.length - 1])));
+      LS.set('outbox', outbox); LS.set('state', S);
+    }
+    setSync();
+  } catch (e) { setSync('offline'); }
+  flushing = false;
+}
+setInterval(flush, 30000);
+function setSync(mode) {
+  const el = document.getElementById('sync');
+  if (mode === 'offline') { el.className = 'pill bad'; el.textContent = `Offline · ${outbox.length} saved here`; return; }
+  if (outbox.length) { el.className = 'pill warn'; el.textContent = `${outbox.length} waiting`; }
+  else { el.className = 'pill on'; el.textContent = 'Synced'; }
+}
+
+const SET_COLS = ['Date', 'Date Estimated', 'Day Type', 'Exercise', 'Set', 'Side', 'Weight (lb)', 'Reps', 'Next Time', 'Notes', 'Session ID', 'Logged At', 'Duration (s)', 'Reps Left', 'Felt Off', 'Tempo Fit', 'Source', 'Row ID'];
+const EV_COLS = ['Logged At', 'Session ID', 'Type', 'Exercise', 'Joint', 'Reason', 'Detail', 'Row ID'];
+const PR_COLS = ['Date', 'Type', 'Name', 'Detail', 'Row ID'];
+function rowToObj(sheet, r) { const cols = sheet === 'Sets' ? SET_COLS : sheet === 'Events' ? EV_COLS : PR_COLS; const o = {}; cols.forEach((c, i) => o[c] = String(r[i] ?? '')); return o; }
+
+// All sets: sheet + not-yet-synced
+function allSets() {
+  const base = (S && S.sets) || [];
+  const have = new Set(base.map(s => s['Row ID']).filter(Boolean));
+  const pend = outbox.filter(o => o.sheet === 'Sets' && !have.has(o.row[17])).map(o => rowToObj('Sets', o.row));
+  return base.concat(pend).map(s => ({
+    date: s['Date'], ex: s['Exercise'], side: s['Side'] || 'Both', weight: num(s['Weight (lb)']), reps: num(s['Reps']),
+    rir: s['Reps Left'], off: s['Felt Off'] === 'Yes', session: s['Session ID'], set: num(s['Set']),
+    t: parseDate(s['Logged At']) || parseDate(s['Date'])
+  })).filter(s => s.t && (s.reps != null || s.weight != null));
+}
+function allEvents() {
+  const base = (S && S.events) || [];
+  const have = new Set(base.map(s => s['Row ID']).filter(Boolean));
+  const pend = outbox.filter(o => o.sheet === 'Events' && !have.has(o.row[7])).map(o => rowToObj('Events', o.row));
+  return base.concat(pend).map(e => ({ t: parseDate(e['Logged At']), type: e['Type'], ex: e['Exercise'], joint: e['Joint'], reason: e['Reason'], detail: e['Detail'] })).filter(e => e.t);
+}
+const setting = (k, d) => { const v = S && S.settings ? S.settings[k] : undefined; if (v === undefined || v === '') return d; const n = num(v); return (typeof d === 'number' && n != null) ? n : v; };
+
+// Joints each exercise loads (used for the hurt-joint check)
+const JOINTS = {
+  'Squats': ['Knee', 'Back', 'Hip'], 'Single Arm Row': ['Shoulder', 'Elbow', 'Back'], 'Incline Bench Press': ['Shoulder', 'Elbow', 'Wrist'],
+  'Lateral Shoulder Raise': ['Shoulder'], 'Tricep Kickback': ['Elbow', 'Shoulder'], 'Sup Dumbbell Curls': ['Elbow', 'Wrist'],
+  'DB Over Press': ['Shoulder', 'Elbow', 'Wrist'], 'Leg Raises': ['Back', 'Hip'], 'Reverse Crunch': ['Back'], 'Plank Hip Dip': ['Shoulder', 'Back'],
+  'Mountain Climbers': ['Shoulder', 'Wrist', 'Hip'], 'Dead Bug': ['Back'], 'Heel Tap': ['Back', 'Neck']
+};
+
+function exercises() {
+  return ((S && S.exercises) || []).filter(e => e['Active'] === 'Yes').map(e => ({
+    name: e['Exercise'], type: e['Day Type'], muscle: e['Primary Muscle'], oneSide: e['One Side'] === 'Yes',
+    quota: num(e['Weekly Quota']) ?? setting('Default Weekly Quota', 6), repMin: num(e['Rep Min']) ?? 12, repMax: num(e['Rep Max']) ?? 15,
+    target: num(e['Target Set (s)']) ?? 45, tempo: e['Tempo'] || 'Even', spr: num(e['Sec per Rep']) ?? 3,
+    equip: e['Equipment'] || '', setup: e['Setup'] || '', cue: e['Form Cue'] || '', order: num(e['Order']) ?? 50,
+    joints: (e['Joints'] ? e['Joints'].split(/,\s*/) : JOINTS[e['Exercise']]) || []
+  })).sort((a, b) => a.order - b.order);
+}
+const exByName = n => exercises().find(e => e.name === n);
+const planFor = n => ((S && S.plan) || []).find(p => p['Exercise'] === n);
+
+// Week math (week starts Monday)
+function weekStart(d = new Date()) { const x = new Date(d); x.setHours(0, 0, 0, 0); const dow = (x.getDay() + 6) % 7; x.setDate(x.getDate() - dow); return x; }
+const counts = s => s.side !== 'Left' && s.reps != null;   // a right+left pair is one set; planned-only rows don't count
+function doneThisWeek(name, sets) { const ws = weekStart(); return sets.filter(s => s.ex === name && s.t >= ws && counts(s)).length; }
+function muscleLoad24(muscle, sets) { const since = Date.now() - DAY; const names = new Set(exercises().filter(e => e.muscle === muscle).map(e => e.name)); return sets.filter(s => names.has(s.ex) && s.t.getTime() >= since && counts(s)); }
+function step(w) { return w < setting('Small Step Below (lb)', 30) ? setting('Small Weight Step (lb)', 2.5) : setting('Large Weight Step (lb)', 5); }
+const roundTo = (w, st) => Math.round(w / st) * st;
+
+// Weight for the next set: trainer's plan first, then simple fallback rules
+function weightFor(ex, sets) {
+  if (ex.type === 'Core') return { w: null, why: 'bodyweight' };
+  const p = planFor(ex.name), pw = p && num(p['Weight (lb)']);
+  const mine = sets.filter(s => s.ex === ex.name && s.weight != null).sort((a, b) => a.t - b.t);
+  const last = mine[mine.length - 1];
+  // plan is newer than my last set → use it
+  const planAt = p && parseDate(p['Updated At']);
+  if (pw != null && (!last || !planAt || planAt >= last.t)) return { w: pw, why: 'plan' };
+  if (!last) return pw != null ? { w: pw, why: 'plan' } : { w: null, why: 'none' };
+  const days = (Date.now() - last.t) / DAY;
+  if (days > 21) {
+    const cut = Math.min(0.2, 0.1 * Math.floor(days / 21));
+    const w = Math.max(step(last.weight), roundTo(last.weight * (1 - cut), step(last.weight)));
+    return { w, why: `layoff (${Math.round(days)} days)` };
+  }
+  const sess = mine.filter(s => s.session === last.session && s.weight === last.weight && s.reps != null);
+  const allTop = sess.length >= 3 && sess.every(s => s.reps >= ex.repMax && !s.off && s.rir !== '0');
+  if (allTop) return { w: last.weight + step(last.weight), why: 'hit top of range' };
+  return { w: last.weight, why: 'same as last time' };
+}
+const fmtW = w => w == null ? 'Bodyweight' : `${+w.toFixed(1)} lb`;
+
+// Is the exercise waiting on a hurt joint?
+function jointState(ex, evs) {
+  const flags = {};
+  evs.slice().sort((a, b) => a.t - b.t).forEach(e => { if (e.type === 'joint_flag') flags[e.joint] = e.t; if (e.type === 'joint_clear') delete flags[e.joint]; });
+  const hit = ex.joints.filter(j => flags[j]);
+  if (!hit.length) return null;
+  const recheck = setting('Injury Recheck (h)', 48) * HOUR;
+  const waited = evs.some(e => e.type === 'joint_wait' && e.ex === ex.name && Date.now() - e.t < recheck);
+  return { joints: hit, waiting: waited };
+}
+
+// ---------- what's next ----------
+function whatsNext(opts = {}) {
+  const sets = allSets(), evs = allEvents();
+  const maxM = setting('Max Sets per Muscle per 24h', 3);
+  // pacing counts from the week start, or from first use of the app if that's later
+  const ws = weekStart(), first = local.firstUse ? new Date(local.firstUse) : new Date();
+  first.setHours(0, 0, 0, 0);
+  const from = first > ws ? first : ws;
+  const daysLeftInWeek = 7 - Math.round((from - ws) / DAY);
+  const daysIn = Math.round((new Date().setHours(0, 0, 0, 0) - from) / DAY) + 1;
+  const exs = exercises();
+  const info = exs.map(ex => {
+    const done = doneThisWeek(ex.name, sets);
+    const expected = ex.quota * Math.min(1, (daysIn - 1) / daysLeftInWeek);   // judged through yesterday
+    const mload = muscleLoad24(ex.muscle, sets).length;
+    const js = jointState(ex, evs);
+    return { ex, done, expected, deficit: expected - done, remaining: ex.quota - done, mload, room: maxM - mload, js };
+  });
+  const skip = new Set(opts.exclude || []);
+  const ok = info.filter(i => !skip.has(i.ex.name) && i.room > 0 && !(i.js && i.js.waiting));
+  const need = ok.filter(i => i.remaining > 0);
+  const cur = SESSION && SESSION.lastEx;
+  let pick = null, extra = false;
+  if (need.length) {
+    const same = cur && need.find(i => i.ex.name === cur && (SESSION.countBy[cur] || 0) < 3);
+    if (same && !opts.moveOn) pick = same;
+    else {
+      const type = SESSION && SESSION.type;
+      need.sort((a, b) => (type && (a.ex.type === type) !== (b.ex.type === type) ? (a.ex.type === type ? -1 : 1) : 0) || (b.deficit - a.deficit) || (a.ex.order - b.ex.order));
+      pick = need.find(i => i.ex.name !== cur || !opts.moveOn) || need[0];
+    }
+  } else if (ok.length) {
+    ok.sort((a, b) => (a.done / a.ex.quota) - (b.done / b.ex.quota));
+    pick = ok[0]; extra = true;
+  }
+  const totQ = info.reduce((a, i) => a + i.ex.quota, 0), totD = info.reduce((a, i) => a + Math.min(i.done, i.ex.quota), 0);
+  const totE = info.reduce((a, i) => a + i.expected, 0);
+  const diff = Math.round(totD - totE);
+  const pace = diff <= -3 ? { cls: 'warn', text: `Behind pace by ${-diff} sets` } : diff >= 4 ? { cls: 'ok', text: `Ahead by ${diff} sets, room for more` } : { cls: 'ok', text: 'On pace' };
+  return { pick, extra, info, totQ, totD, pace, sets, evs };
+}
+
+// ---------- voice ----------
+const V = { rec: null, on: false, want: false, speaking: false, handlers: null, words: [], lastWordAt: 0, utt: [], timer: null };
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const NUMW = { zero: 0, none: 0, one: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, 'twenty-one': 21, 'twenty-two': 22, 'twenty-three': 23, 'twenty-four': 24, 'twenty-five': 25 };
+const SAY = {
+  ready: /^(ready|go|let'?s go|start|i'?m ready|begin|redi)$/,
+  done: /^(done|dun|dunn|dona|don|finished|that'?s it|stop set)$/,
+  next: /^(what'?s next|what is next|next|whats next)$/,
+  skip: /^(skip|skip it|skip this|pass)$/,
+  yes: /^(yes|yeah|yep|ok|okay|good|sure|running|watch running|it'?s running|correct|save|right)$/,
+  no: /^(no|nope|wait|not now|later)$/,
+  end: /^(end|end session|i'?m done|finish|all done|stop workout)$/
+};
+function voiceStart() {
+  if (!SR) { toast('Voice not available here'); return; }
+  V.want = true;
+  if (V.on) return;
+  try { V.rec && V.rec.abort(); } catch {}
+  const r = new SR(); V.rec = r;
+  r.lang = 'en-US'; r.continuous = true; r.interimResults = true;
+  r.onstart = () => { V.on = true; V.words = []; micUI(); };
+  r.onresult = e => {
+    let text = '';
+    for (let i = 0; i < e.results.length; i++) text += ' ' + e.results[i][0].transcript;
+    const words = text.toLowerCase().replace(/[.,!?]/g, '').trim().split(/\s+/).filter(Boolean);
+    if (V.speaking) { V.words = words; return; }          // ignore our own voice
+    const now = Date.now();
+    if (words.length > V.words.length) {
+      if (now - V.lastWordAt > 700) V.utt = [];             // a pause starts a new phrase
+      const fresh = words.slice(V.words.length);
+      V.utt = V.utt.concat(fresh);
+      V.lastWordAt = now;
+      document.querySelectorAll('.heard').forEach(h => h.textContent = '“' + V.utt.join(' ') + '”');
+      clearTimeout(V.timer);
+      V.timer = setTimeout(() => decide(V.utt.slice()), 550);  // wait to see if more words follow
+    } else if (words.length === V.words.length && words.length) {
+      // last word revised (e.g. "dun" → "done")
+      V.utt[V.utt.length - 1] = words[words.length - 1];
+    }
+    V.words = words;
+  };
+  r.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; toast('Microphone not allowed'); } };
+  r.onend = () => { V.on = false; micUI(); if (V.want) setTimeout(() => { try { voiceStart(); } catch {} }, 300); };
+  try { r.start(); } catch {}
+}
+function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
+function micUI() { const el = document.getElementById('mic'); el.className = 'pill' + (V.on ? ' on' : ''); el.textContent = V.on ? '🎙 listening' : '🎙 off'; }
+document.getElementById('mic').onclick = () => { unlockAudio(); V.on ? voiceStop() : voiceStart(); };
+function decide(utt) {
+  if (!utt.length || utt.length > 3 || !V.handlers) return;   // long phrases are just talking
+  const phrase = utt.join(' ');
+  const h = V.handlers;
+  for (const k of Object.keys(SAY)) if (h[k] && SAY[k].test(phrase)) { V.utt = []; h[k](); return; }
+  if (h.number) {
+    const w = utt[utt.length - 1]; const n = /^\d+$/.test(w) ? +w : NUMW[w];
+    if (n != null && utt.length <= 2) { V.utt = []; h.number(n, w); }
+  }
+}
+function speak(text) {
+  if (!('speechSynthesis' in window) || !LS.get('talk', true)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.rate = 1.05;
+    V.speaking = true;
+    u.onend = u.onerror = () => setTimeout(() => { V.speaking = false; V.utt = []; }, 400);
+    speechSynthesis.speak(u);
+  } catch {}
+}
+let actx = null;
+function unlockAudio() { try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {} }
+function beep(f = 880, ms = 160) { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); } catch {} }
+let wake = null;
+async function keepAwake() { try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => wake = null); } } catch {} }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { keepAwake(); if (Date.now() - lastLoad > 5 * 60e3) loadState(true); } });
+
+// ---------- session ----------
+let SESSION = LS.get('session', null);
+function sessionAlive() { return SESSION && Date.now() - SESSION.lastAt < 45 * 60e3; }
+function newSession() {
+  const d = new Date();
+  if (!local.firstUse) { local.firstUse = Date.now(); LS.set('local', local); }
+  SESSION = { id: `${dstr(d)}-${pad(d.getHours())}${pad(d.getMinutes())}`, start: Date.now(), lastAt: Date.now(), type: null, lastEx: null, countBy: {}, log: [], skipped: [], prs: [] };
+  saveSession();
+}
+function saveSession() { LS.set('session', SESSION); }
+function event(type, exName = '', joint = '', reason = '', detail = '') {
+  queue('Events', [tstr(new Date()), SESSION ? SESSION.id : '', type, exName, joint, reason, detail, uid()]);
+}
+
+// ---------- screens ----------
+let CUR = null;   // the set in progress
+function screen(html, handlers) { $app.innerHTML = html; V.handlers = handlers || null; window.scrollTo(0, 0); }
+function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
+
+function showSetup() {
+  screen(`<h1>Connect to your sheet</h1>
+  <p class="dim">Open the setup link Claude gave you on this iPad, or paste the two values here.</p>
+  <div class="card"><h3>Web app URL</h3><input id="u" placeholder="https://script.google.com/macros/s/…/exec"><h3 class="mt">Key</h3><input id="k"></div>
+  <button class="go" id="save" style="width:100%">Connect</button>`);
+  on('save', async () => { CFG = { url: document.getElementById('u').value.trim(), key: document.getElementById('k').value.trim() }; LS.set('cfg', CFG); await loadState(); home(); });
+}
+
+function home() {
+  if (!CFG) return showSetup();
+  if (!S) { screen(`<h1>Loading…</h1>`); loadState().then(() => S ? home() : showSetup()); return; }
+  const n = whatsNext();
+  const alive = sessionAlive();
+  const p = n.pick;
+  const weekPct = Math.round(100 * n.totD / Math.max(1, n.totQ));
+  let card = '';
+  if (p) {
+    const w = weightFor(p.ex, n.sets);
+    card = `<div class="card"><h3>${n.extra ? 'Quota done. Extra set?' : 'Up next'}</h3><h1>${esc(p.ex.name)}</h1>
+      <div class="big">${fmtW(w.w)}</div>
+      <div class="setup mt">${esc(p.ex.setup)}</div>
+      <div class="dim mt">${p.done}/${p.ex.quota} this week · ${esc(p.ex.muscle)}${p.js ? ` · <span class="warn">${p.js.joints.join(', ')} flagged</span>` : ''}</div></div>`;
+  } else {
+    card = `<div class="card"><h1>Nothing available right now</h1><p class="dim">Every muscle has had ${setting('Max Sets per Muscle per 24h', 3)} sets in the last 24 hours, or is waiting on a flagged joint. Come back later.</p></div>`;
+  }
+  screen(`${card}
+    <div class="row"><button class="go" id="go">${alive ? 'Continue' : 'Start'}</button><button id="pickx">Pick exercise</button></div>
+    <div class="card mt"><div class="row" style="align-items:center"><div><h3>This week</h3><b>${n.totD} of ${n.totQ} sets</b> · <span class="${n.pace.cls}">${n.pace.text}</span></div><div style="flex:0 0 120px"><button class="sm" id="wk">Details</button></div></div><div class="bar mt"><i style="width:${weekPct}%"></i></div></div>
+    <div class="row"><button class="sm" id="hurt">Flag a hurt joint</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button></div>
+    <div class="heard center"></div>`,
+    { ready: go, next: go, yes: go });
+  function go() { keepAwake(); if (!V.want) voiceStart(); if (!p) return; if (!alive) watchGate(() => prep(p.ex.name)); else prep(p.ex.name); }
+  on('go', go);
+  on('pickx', pickExercise);
+  on('wk', weekView);
+  on('hurt', () => jointPicker(j => { event('joint_flag', '', j, 'flagged from home'); toast(`${j} flagged`); home(); }));
+  on('refresh', async () => { await loadState(); home(); });
+  on('talk', () => { LS.set('talk', !LS.get('talk', true)); home(); });
+}
+
+function watchGate(next) {
+  if (setting('Watch Reminder', 'Yes') !== 'Yes') { newSession(); return next(); }
+  speak('Start your Apple Watch workout. Say running when it is going.');
+  screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>Start your Apple Watch workout</h1><p class="dim" style="font-size:26px">Traditional Strength Training. Say “running” or tap when it’s going.</p>
+    <button class="go mt" id="ok" style="width:70%">Watch is running</button><div class="mt"><button class="sm" id="cancel">Back</button></div><div class="heard"></div></div>`,
+    { yes: ok });
+  function ok() { newSession(); event('session_start', '', '', '', 'watch confirmed'); next(); }
+  on('ok', ok); on('cancel', home);
+}
+
+function pickExercise() {
+  const n = whatsNext();
+  screen(`<h2>Pick an exercise</h2><div class="grid2">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div><button class="mt" id="back" style="width:100%">Back</button>`);
+  document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { const x = b.dataset.x; if (!sessionAlive()) watchGate(() => prep(x)); else prep(x); });
+  on('back', home);
+}
+
+function weekView() {
+  const n = whatsNext();
+  screen(`<h2>This week · <span class="${n.pace.cls}">${n.pace.text}</span></h2><div class="card">${n.info.map(i => `<div class="exrow"><span class="n">${esc(i.ex.name)}</span><div class="bar"><i style="width:${Math.min(100, 100 * i.done / i.ex.quota)}%;background:${i.done >= i.ex.quota ? 'var(--ok)' : i.deficit > 1.5 ? 'var(--warn)' : 'var(--acc)'}"></i></div><span class="c">${i.done}/${i.ex.quota}</span></div>`).join('')}</div><button id="back" style="width:100%">Back</button>`);
+  on('back', home);
+}
+
+// Prepare a set (or a sitting of sets) for one exercise
+function prep(name, opts = {}) {
+  const ex = exByName(name); if (!ex) return home();
+  if (!sessionAlive()) newSession();
+  const sets = allSets(), evs = allEvents();
+  // hurt joint check
+  const js = jointState(ex, evs);
+  if (js && !opts.jointOk) {
+    if (js.waiting) return nextUp([name]);
+    return jointCheck(ex, js.joints);
+  }
+  let w = (CUR && CUR.name === name && CUR.nextWeight !== undefined) ? { w: CUR.nextWeight, why: 'adjusted' } : weightFor(ex, sets);
+  if (opts.lighter && w.w != null) w = { w: Math.max(step(w.w), w.w - step(w.w)), why: 'lighter return set' };
+  const setNo = (SESSION.countBy[name] || 0) + 1;
+  // one-side: right first, sometimes left first (decided once per sitting)
+  let first = 'Right';
+  if (ex.oneSide) {
+    if (CUR && CUR.name === name && CUR.first) first = CUR.first;
+    else if (setting('Alternate First Side', 'Occasionally') !== 'Never' && Math.random() < 0.25) first = 'Left';
+  }
+  const prev = SESSION.log[SESSION.log.length - 1];
+  const changes = [];
+  if (!prev || prev.ex !== name) {
+    if (prev && prev.equip !== ex.equip) changes.push(`Setup: ${ex.equip}`);
+    if (w.w != null && (!prev || prev.weight !== w.w)) changes.push(`Weight: ${fmtW(w.w)}`);
+  } else if (w.w != null && prev.weight !== w.w) changes.push(`Change weight to ${fmtW(w.w)}`);
+  CUR = { name, ex, weight: w.w, why: w.why, setNo, first, side: ex.oneSide ? first : 'Both', sides: [], lighter: !!opts.lighter, nextWeight: undefined };
+  SESSION.type = SESSION.type || ex.type; saveSession();
+  const plan = planFor(name);
+  const note = plan && plan['Trainer Note'];
+  speak(`${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''} Say ready.`);
+  screen(`<div class="card"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3><h1>${esc(name)}</h1>
+     <div class="big">${fmtW(w.w)}</div><div class="dim">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
+     ${changes.length ? `<div class="change">${changes.map(esc).join(' · ')}</div>` : ''}
+     <div class="setup mt">${esc(ex.setup)}</div><div class="cue">${esc(ex.cue)}</div>
+     ${note ? `<div class="cue">Trainer: ${esc(note)}</div>` : ''}
+     <div class="dim mt">${ex.repMin}–${ex.repMax} reps · about ${ex.target}s · tempo ${esc(ex.tempo)}, ${ex.spr}s per rep</div></div>
+     <button class="go" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button>
+     <div class="row mt"><button class="sm" id="skip">Skip</button><button class="sm" id="other">Different exercise</button><button class="sm stop" id="end">End session</button></div>
+     <div class="heard center"></div>`,
+    { ready: startSet, skip: () => skipFlow(name), end: endFlow });
+  on('go', startSet); on('skip', () => skipFlow(name)); on('other', pickExercise); on('end', endFlow);
+}
+
+function jointCheck(ex, joints) {
+  speak(`Your ${joints.join(' and ')} was flagged. Try ${ex.name} now, or wait?`);
+  screen(`<div class="card"><h3>Joint check</h3><h1>${esc(ex.name)}</h1><p style="font-size:28px">Your <b class="warn">${joints.map(esc).join(', ')}</b> was flagged. Good to try this now?</p></div>
+    <div class="row"><button class="go" id="y">Try it (lighter)</button><button id="n">Wait</button></div>
+    <div class="mt"><button class="sm" id="clr" style="width:100%">It’s fine now, clear the flag</button></div><div class="heard center"></div>`,
+    { yes: tryIt, no: wait });
+  function tryIt() { event('joint_try', ex.name, joints.join(', ')); prep(ex.name, { jointOk: true, lighter: true }); }
+  function wait() { event('joint_wait', ex.name, joints.join(', ')); toast(`Won't ask about ${ex.name} for ${setting('Injury Recheck (h)', 48)} hours`); nextUp([ex.name]); }
+  on('y', tryIt); on('n', wait);
+  on('clr', () => { joints.forEach(j => event('joint_clear', ex.name, j)); prep(ex.name, { jointOk: true }); });
+}
+
+// Tempo guide: fraction of each rep spent lifting
+const upFrac = t => /1\/3 up/i.test(t) ? 1 / 3 : /2\/3 up/i.test(t) ? 2 / 3 : 0.5;
+let setTimer = null;
+function startSet() {
+  const ex = CUR.ex;
+  CUR.start = Date.now();
+  screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''}</h3>
+      <div class="huge" id="clock">0</div><div class="dim" style="font-size:26px">seconds · target ${ex.target}s</div>
+      <div class="big mt" id="reps">0</div><div class="dim">reps at ${ex.spr}s each</div></div>
+      <div style="flex:1"><div id="tempo"><i id="tb"></i></div><div id="tempoLbl">UP</div></div></div>
+      <button class="stop mt" id="done" style="width:100%;font-size:48px;min-height:160px">DONE</button><div class="heard center"></div>`,
+    { done: finishSet });
+  on('done', finishSet);
+  const uf = upFrac(ex.tempo), spr = ex.spr * 1000;
+  let beeped = false;
+  clearInterval(setTimer);
+  setTimer = setInterval(() => {
+    const el = Date.now() - CUR.start, s = el / 1000;
+    const c = document.getElementById('clock'); if (!c) return clearInterval(setTimer);
+    c.textContent = Math.floor(s);
+    document.getElementById('reps').textContent = Math.floor(el / spr);
+    const ph = (el % spr) / spr;
+    const up = ph < uf, h = up ? ph / uf : 1 - (ph - uf) / (1 - uf);
+    document.getElementById('tb').style.height = (h * 100) + '%';
+    document.getElementById('tempoLbl').textContent = up ? 'UP' : 'DOWN';
+    if (!beeped && s >= ex.target) { beeped = true; beep(1046, 250); c.classList.add('ok'); }
+  }, 50);
+}
+function finishSet() {
+  clearInterval(setTimer);
+  CUR.dur = Math.round((Date.now() - CUR.start) / 1000);
+  CUR.est = Math.max(1, Math.round(CUR.dur / CUR.ex.spr));
+  repsScreen();
+}
+function repsScreen() {
+  let reps = CUR.est;
+  const draw = () => { document.getElementById('rv').textContent = reps; };
+  speak('How many reps?');
+  screen(`<div class="center"><h3>${esc(CUR.name)}${CUR.ex.oneSide ? ` · ${CUR.side} side` : ''} · ${CUR.dur}s</h3><h2>How many reps?</h2>
+    <div class="row" style="align-items:center"><button id="m" style="flex:0 0 160px;font-size:60px">−</button><div class="huge" id="rv">${reps}</div><button id="p" style="flex:0 0 160px;font-size:60px">+</button></div>
+    <button class="go mt" id="ok" style="width:100%">Save ${'reps'}</button><div class="heard"></div></div>`,
+    { number: n => { reps = n; draw(); setTimeout(save, 700); }, yes: () => save() });
+  on('m', () => { reps = Math.max(0, reps - 1); draw(); }); on('p', () => { reps++; draw(); }); on('ok', save);
+  let saved = false;
+  function save() {
+    if (saved) return; saved = true;
+    CUR.sides.push({ side: CUR.side, reps, dur: CUR.dur });
+    if (CUR.ex.oneSide && CUR.sides.length === 1) {
+      CUR.side = CUR.first === 'Right' ? 'Left' : 'Right';
+      speak(`${CUR.side} side. Go when ready.`);
+      screen(`<div class="center" style="padding-top:30px"><h3>No rest, switch sides</h3><h1>${CUR.side} side</h1><div class="big">${fmtW(CUR.weight)}</div>
+        <button class="go mt" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button><div class="heard"></div></div>`, { ready: startSet });
+      on('go', startSet);
+      return;
+    }
+    effortScreen();
+  }
+}
+function effortScreen() {
+  let off = false;
+  speak('Reps left in the tank?');
+  screen(`<div class="center"><h2>How many reps did you have left?</h2>
+    <div class="chips"><button id="r0">0</button><button id="r2">2</button><button id="r4">4+</button></div>
+    <button class="mt sm" id="off" style="width:100%">⚠️ This felt off (pain or odd fatigue)</button><div class="heard"></div></div>`,
+    { number: n => pick(n >= 4 ? '4+' : n >= 2 ? '2' : '0') });
+  on('r0', () => pick('0')); on('r2', () => pick('2')); on('r4', () => pick('4+'));
+  on('off', () => { off = !off; document.getElementById('off').classList.toggle('sel', off); });
+  function pick(rir) {
+    CUR.rir = rir; CUR.off = off;
+    const last = (SESSION.countBy[CUR.name] || 0) + 1 >= 3;
+    const checked = local.tempoChecked[CUR.name] || 0;
+    if (last && Date.now() - checked > 7 * DAY) tempoScreen(); else commit('');
+  }
+}
+function tempoScreen() {
+  const t = CUR.ex.tempo;
+  speak('Did the tempo fit?');
+  screen(`<div class="center"><h2>Did the tempo fit?</h2><p class="dim">Now: ${esc(t)}, ${CUR.ex.spr}s per rep</p>
+    <button class="go" id="g" style="width:100%">Felt right</button>
+    <h3 class="mt">Or switch the pattern</h3><div class="chips"><button class="sm" data-t="Even">Even up and down</button><button class="sm" data-t="1/3 up 2/3 down">⅓ up, ⅔ down</button><button class="sm" data-t="2/3 up 1/3 down">⅔ up, ⅓ down</button></div>
+    <div class="chips mt"><button class="sm" data-s="-0.5">Faster reps</button><button class="sm" data-s="0.5">Slower reps</button></div><div class="heard"></div></div>`,
+    { yes: () => done('Good') });
+  on('g', () => done('Good'));
+  document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { const v = b.dataset.t; api({ action: 'updateExercise', exercise: CUR.name, field: 'Tempo', value: v }).then(() => loadState(true)).catch(() => {}); done('Changed to ' + v); });
+  document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const v = Math.max(1.5, CUR.ex.spr + (+b.dataset.s)); api({ action: 'updateExercise', exercise: CUR.name, field: 'Sec per Rep', value: v }).then(() => loadState(true)).catch(() => {}); done(`Changed to ${v}s per rep`); });
+  function done(fit) { local.tempoChecked[CUR.name] = Date.now(); LS.set('local', local); commit(fit); }
+}
+
+// Save the set (both sides for one-side exercises), then rest
+function commit(tempoFit) {
+  const d = new Date(), ex = CUR.ex;
+  SESSION.countBy[CUR.name] = (SESSION.countBy[CUR.name] || 0) + 1;
+  const setNo = SESSION.countBy[CUR.name];
+  const order = CUR.sides.slice().sort((a, b) => (a.side === 'Right' ? -1 : 1) - (b.side === 'Right' ? -1 : 1));
+  const notes = [CUR.lighter ? 'lighter return set' : '', CUR.why === 'adjusted' ? 'weight changed mid-session' : '', ex.oneSide && CUR.first === 'Left' ? 'left side first' : ''].filter(Boolean).join('; ');
+  order.forEach(s => queue('Sets', [dstr(d), 'No', ex.type, CUR.name, setNo, s.side, CUR.weight == null ? '' : CUR.weight, s.reps, '', notes, SESSION.id, tstr(d), s.dur, CUR.rir, CUR.off ? 'Yes' : '', tempoFit, 'App', uid()]));
+  const reps = Math.min(...CUR.sides.map(s => s.reps)), dur = CUR.sides.reduce((a, s) => a + s.dur, 0);
+  SESSION.log.push({ ex: CUR.name, equip: ex.equip, weight: CUR.weight, reps: CUR.sides.map(s => s.reps).join('/'), dur, rir: CUR.rir, off: CUR.off });
+  SESSION.lastEx = CUR.name; SESSION.lastAt = Date.now();
+  if (CUR.lighter && !CUR.off) ex.joints.forEach(j => { /* clear only joints that were flagged */ const js = jointState(ex, allEvents()); if (js && js.joints.includes(j)) event('joint_clear', CUR.name, j, 'return set went fine'); });
+  // personal record: heavier than ever, or more reps than ever at this weight
+  checkPR(reps);
+  // mid-session tweak only when a set is wildly off; "felt off" holds the weight
+  let tweak = null;
+  if (!CUR.off && CUR.weight != null) {
+    if (reps >= ex.repMax + 4) tweak = { w: CUR.weight + step(CUR.weight), msg: `That was well over ${ex.repMax}. Go up to` };
+    else if (reps <= ex.repMin - 5) tweak = { w: Math.max(step(CUR.weight), CUR.weight - step(CUR.weight)), msg: `That was well under ${ex.repMin}. Drop to` };
+  }
+  saveSession();
+  rest(tweak);
+}
+function checkPR(reps) {
+  if (CUR.weight == null) return;
+  const prior = allSets().filter(s => s.ex === CUR.name && s.reps != null && !(s.session === SESSION.id));
+  if (!prior.length) return;
+  const maxW = Math.max(...prior.map(s => s.weight || 0));
+  const atW = prior.filter(s => s.weight === CUR.weight).map(s => s.reps);
+  let pr = null;
+  if (CUR.weight > maxW) pr = `Heaviest ever: ${fmtW(CUR.weight)}`;
+  else if (atW.length && reps > Math.max(...atW)) pr = `Most reps at ${fmtW(CUR.weight)}: ${reps}`;
+  if (pr && !SESSION.prs.some(p => p.startsWith(CUR.name))) {
+    SESSION.prs.push(`${CUR.name}: ${pr}`);
+    queue('Progress', [dstr(new Date()), 'PR', CUR.name, pr, uid()]);
+    toast('🏆 ' + pr);
+  }
+}
+
+let restTimer = null;
+function rest(tweak) {
+  const secs = setting('Rest Between Sets (s)', 60);
+  const endAt = Date.now() + secs * 1000;
+  const n = whatsNext({});
+  const p = n.pick;
+  let nextHtml = '<h2>That’s everything for now</h2>';
+  let nextName = null;
+  if (p) {
+    nextName = p.ex.name;
+    const same = p.ex.name === CUR.name;
+    const w = same && tweak ? tweak.w : weightFor(p.ex, n.sets).w;
+    const chg = [];
+    if (!same && p.ex.equip !== CUR.ex.equip) chg.push(p.ex.equip);
+    if (w !== CUR.weight && w != null) chg.push(`${fmtW(w)} dumbbell${p.ex.oneSide ? '' : 's'}`);
+    nextHtml = `<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big">${fmtW(w)}</div>${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}<div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>`;
+  }
+  screen(`<div class="row"><div class="card center" style="flex:0 0 300px"><h3>Rest</h3><div class="huge" id="rc">${secs}</div></div><div class="card">${nextHtml}</div></div>
+    ${tweak && p && p.ex.name === CUR.name ? `<div class="card"><b>${tweak.msg} ${fmtW(tweak.w)}?</b><div class="row mt"><button class="sm go" id="ty">Yes, change it</button><button class="sm" id="tn">Keep ${fmtW(CUR.weight)}</button></div></div>` : ''}
+    <div class="row"><button class="go" id="go">Ready</button><button id="skip">Skip that</button><button class="stop" id="end">End session</button></div><div class="heard center"></div>`,
+    { ready: goNext, skip: () => nextName && skipFlow(nextName), end: endFlow, next: goNext });
+  if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
+  on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
+  clearInterval(restTimer);
+  let rung = false;
+  restTimer = setInterval(() => {
+    const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+    const el = document.getElementById('rc'); if (!el) return clearInterval(restTimer);
+    el.textContent = left;
+    if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); speak(nextName ? `Ready when you are. ${nextName}.` : 'Rest done.'); }
+  }, 250);
+  function goNext() { clearInterval(restTimer); if (!nextName) return summary(); if (nextName !== CUR.name) CUR.nextWeight = undefined; prep(nextName); }
+}
+function nextUp(exclude) {
+  const n = whatsNext({ exclude: (SESSION ? SESSION.skipped : []).concat(exclude || []), moveOn: true });
+  if (!n.pick) { toast('Nothing else available right now'); return SESSION && SESSION.log.length ? summary() : home(); }
+  prep(n.pick.ex.name);
+}
+
+const SKIP_REASONS = ['Too tired', 'Joint hurts', 'Short on time', 'Equipment', 'Not feeling it', 'Other'];
+function skipFlow(name) {
+  clearInterval(restTimer);
+  speak('Why skip?');
+  screen(`<h2>Why skip ${esc(name)}?</h2><div class="chips">${SKIP_REASONS.map(r => `<button data-r="${r}">${r}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Never mind</button>`);
+  document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
+    const r = b.dataset.r;
+    const fin = joint => { event('skip', name, joint || '', r); if (joint) event('joint_flag', name, joint, 'flagged on skip'); SESSION.skipped.push(name); saveSession(); nextUp([name]); };
+    if (r === 'Joint hurts') jointPicker(fin); else fin('');
+  });
+  on('back', () => prep(name));
+}
+function jointPicker(cb) {
+  screen(`<h2>Which joint?</h2><div class="chips">${['Shoulder', 'Elbow', 'Wrist', 'Back', 'Hip', 'Knee', 'Neck'].map(j => `<button data-j="${j}">${j}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Back</button>`);
+  document.querySelectorAll('[data-j]').forEach(b => b.onclick = () => cb(b.dataset.j));
+  on('back', home);
+}
+const QUIT_REASONS = ['Done for now', 'Too tired', 'Something hurts', 'Out of time', 'Other'];
+function endFlow() {
+  clearInterval(restTimer); clearInterval(setTimer);
+  if (!SESSION || !SESSION.log.length) { SESSION = null; LS.set('session', null); return home(); }
+  screen(`<h2>Wrapping up. Why stop here?</h2><div class="chips">${QUIT_REASONS.map(r => `<button data-r="${r}">${r}</button>`).join('')}</div>`, { yes: () => finish('Done for now') });
+  document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { const r = b.dataset.r; if (r === 'Something hurts') jointPicker(j => { event('joint_flag', '', j, 'flagged on quit'); finish(r); }); else finish(r); });
+  function finish(r) { event('session_end', '', '', r, `${SESSION.log.length} sets`); summary(); }
+}
+function summary() {
+  clearInterval(restTimer);
+  const s = SESSION || { log: [], prs: [], start: Date.now() };
+  const mins = Math.round((Date.now() - s.start) / 60000);
+  const work = s.log.reduce((a, l) => a + l.dur, 0);
+  const n = whatsNext();
+  const byEx = {};
+  s.log.forEach(l => { (byEx[l.ex] = byEx[l.ex] || []).push(l); });
+  speak(`Nice work. ${s.log.length} sets done.${s.prs.length ? ' And a new record.' : ''}`);
+  screen(`<h1>Nice work 💪</h1>
+    <div class="row"><div class="card center"><div class="big">${s.log.length}</div><div class="dim">sets</div></div><div class="card center"><div class="big">${mins}</div><div class="dim">minutes</div></div><div class="card center"><div class="big">${Math.round(work / 60)}</div><div class="dim">min of muscle work</div></div></div>
+    ${s.prs.length ? `<div class="card"><h3>Records</h3>${s.prs.map(p => `<div>🏆 ${esc(p)}</div>`).join('')}</div>` : ''}
+    <div class="card">${Object.entries(byEx).map(([k, v]) => `<div class="exrow"><span class="n">${esc(k)}</span><span>${v.map(l => `${l.weight == null ? '' : +l.weight.toFixed(1) + '×'}${l.reps}`).join(' · ')}</span></div>`).join('')}</div>
+    <div class="card"><b>This week: ${n.totD} of ${n.totQ} sets</b> · <span class="${n.pace.cls}">${n.pace.text}</span></div>
+    <button class="go" id="h" style="width:100%">Done</button>`, { yes: close });
+  function close() { SESSION = null; LS.set('session', null); CUR = null; flush(); home(); }
+  on('h', close);
+}
+
+// ---------- start ----------
+setSync(); flush();
+if (CFG) loadState(true).then(() => { if (!$app.innerHTML || /Loading/.test($app.innerHTML)) home(); });
+home();
+</script>
+</body>
+</html>
