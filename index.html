@@ -254,7 +254,7 @@ function whatsNext(opts = {}) {
 }
 
 // ---------- voice ----------
-const V = { rec: null, on: false, want: false, speaking: false, handlers: null, prev: [], lastWordAt: 0, utt: [], timer: null, ttsWords: new Set() };
+const V = { rec: null, on: false, want: false, speaking: false, handlers: null, prev: [], lastWordAt: 0, utt: [], timer: null, ttsWords: new Set(), screenAt: 0 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const NUMW = { zero: 0, none: 0, one: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, 'twenty-one': 21, 'twenty-two': 22, 'twenty-three': 23, 'twenty-four': 24, 'twenty-five': 25 };
 const SAY = {
@@ -285,6 +285,9 @@ function voiceStart(why) {
     const revised = k < oldLen;                 // Safari changed a word we already had
     V.prev = words;
     if (V.speaking) fresh = fresh.filter(w => !V.ttsWords.has(w));   // drop our own spoken prompt
+    // a new screen only listens to fresh speech: ignore words in its first moment, and rewrites of words said before it
+    if (Date.now() - V.screenAt < 1200) return;
+    if (revised && !V.utt.length) return;
     if (!fresh.length) return;
     const now = Date.now();
     if (now - V.lastWordAt > 900 && !revised) V.utt = [];   // a pause starts a new phrase
@@ -300,7 +303,7 @@ function voiceStart(why) {
   };
   r.onend = () => {
     V.on = false; micUI();
-    const ran = Date.now() - (V.startedAt || 0);
+    const ran = V.startedAt ? Date.now() - V.startedAt : 0; V.startedAt = 0;
     if (ran < 3000) V.quickStops = (V.quickStops || 0) + 1; else { if (V.quickStops) vlog('', `mic had ${V.quickStops} quick stops`); V.quickStops = 0; vlog('', `mic stopped after ${Math.round(ran / 1000)}s`); }
     if (V.quickStops >= 4) {               // it keeps failing: stop retrying until the mic badge is tapped
       vlog('', 'mic keeps stopping, waiting for a tap'); V.want = false; V.quickStops = 0;
@@ -376,7 +379,7 @@ function event(type, exName = '', joint = '', reason = '', detail = '') {
 
 // ---------- screens ----------
 let CUR = null;   // the set in progress
-function screen(html, handlers) { $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; }
+function screen(html, handlers) { $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; }
 function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
 
 function showSetup() {
