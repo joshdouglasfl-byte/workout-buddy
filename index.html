@@ -47,7 +47,8 @@ button .say{color:inherit}
 </style>
 </head>
 <body>
-<div id="top"><b>Workout Buddy</b><span class="sp"></span><span id="sync" class="pill">…</span><span id="mic" class="pill">🎙 off</span></div>
+<div id="top"><b>Workout Buddy</b><span class="sp"></span><span id="noteT" class="pill">💬 Tell trainer</span><span id="noteD" class="pill">🛠 Tell developer</span><span id="sync" class="pill">…</span><span id="mic" class="pill">🎙 off</span></div>
+<div id="noteBox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:50;padding:40px"></div>
 <div id="app"></div>
 <div id="toast" class="toast"></div>
 <script>
@@ -276,11 +277,11 @@ function voiceStart(why) {
   try { V.rec && V.rec.abort(); } catch {}
   const r = new SR(); V.rec = r;
   r.lang = 'en-US'; r.continuous = true; r.interimResults = true;
-  r.onstart = () => { V.on = true; V.prev = []; V.startedAt = Date.now(); micUI(); if (!V.quickStops) vlog('', 'mic on' + (why ? ' (' + why + ')' : '')); };
+  r.onstart = () => { V.on = true; V.needTap = false; V.prev = []; V.startedAt = Date.now(); micUI(); if (!V.quickStops) vlog('', 'mic on' + (why ? ' (' + why + ')' : '')); };
   r.onresult = e => {
     let text = '';
     for (let i = 0; i < e.results.length; i++) text += ' ' + e.results[i][0].transcript;
-    const words = text.toLowerCase().replace(/[.,!?]/g, ' ').trim().split(/\s+/).filter(Boolean);
+    const words = text.toLowerCase().replace(/[.,!?+]/g, ' ').trim().split(/\s+/).filter(Boolean);
     // new words = everything after the part we already saw (Safari sometimes rewrites earlier words)
     const oldLen = V.prev.length;
     let k = 0; while (k < oldLen && k < words.length && V.prev[k] === words[k]) k++;
@@ -302,11 +303,17 @@ function voiceStart(why) {
   };
   r.onerror = e => {
     if (e.error !== 'no-speech' && e.error !== 'aborted') vlog('', 'mic error: ' + e.error);
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; toast('Microphone not allowed'); }
+    if (e.error === 'audio-capture') V.audioLost = true;   // iPad took the mic away (often after a beep or spoken prompt)
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; V.needTap = true; micUI(); }
   };
   r.onend = () => {
     V.on = false; micUI();
     const ran = V.startedAt ? Date.now() - V.startedAt : 0; V.startedAt = 0;
+    if (V.audioLost) {                     // lost the mic: get it back quickly, and don't count it as a failure
+      V.audioLost = false; vlog('', `mic lost after ${Math.round(ran / 1000)}s, restarting`);
+      if (V.want) setTimeout(() => { try { voiceStart('after mic loss'); } catch {} }, 700);
+      return;
+    }
     if (ran < 3000) V.quickStops = (V.quickStops || 0) + 1; else { if (V.quickStops) vlog('', `mic had ${V.quickStops} quick stops`); V.quickStops = 0; vlog('', `mic stopped after ${Math.round(ran / 1000)}s`); }
     if (V.quickStops >= 4) {               // it keeps failing: stop retrying until the mic badge is tapped
       vlog('', 'mic keeps stopping, waiting for a tap'); V.want = false; V.quickStops = 0;
@@ -319,7 +326,15 @@ function voiceStart(why) {
 // if the mic quietly dropped, bring it back
 setInterval(() => { if (V.want && !V.on) voiceStart('watchdog'); }, 4000);
 function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
-function micUI() { const el = document.getElementById('mic'); el.className = 'pill' + (V.on ? ' on' : ''); el.textContent = V.on ? '🎙 listening' : '🎙 off'; }
+function micUI() {
+  const el = document.getElementById('mic');
+  if (V.needTap && !V.on) { el.className = 'pill warn'; el.textContent = '🎙 tap anywhere to listen'; return; }
+  el.className = 'pill' + (V.on ? ' on' : ''); el.textContent = V.on ? '🎙 listening' : '🎙 off';
+}
+// Safari only lets the mic restart after a tap: any tap on the page brings it back if it dropped
+document.addEventListener('click', () => { if ((V.needTap || (V.want && !V.on)) && SR) { V.needTap = false; V.quickStops = 0; voiceStart('tap'); } }, true);
+// right after a beep or spoken prompt, make sure the mic is still running
+function micCheckSoon() { setTimeout(() => { if (V.want && !V.on) voiceStart('after sound'); }, 600); }
 document.getElementById('mic').onclick = () => { unlockAudio(); V.quickStops = 0; V.on ? voiceStop() : voiceStart('tap'); };
 const FILLER = new Set(['uh', 'um', 'umm', 'hmm', 'so', 'and', 'the', 'oh', 'ah', 'like', 'please', 'now']);
 // Command words that count on their own inside a short phrase ("ready ready ready", "okay go")
@@ -331,6 +346,10 @@ function decide(utt) {
   // collapse repeats and fillers: "ready ready ready" → "ready"
   const toks = utt.filter(w => !FILLER.has(w)).filter((w, i, a) => i === 0 || w !== a[i - 1]);
   const uniq = [...new Set(toks)];
+  // "tell my trainer ..." / "tell my developer ..." work on any screen; anything said after it starts the note
+  const all = utt.join(' '), m = all.match(/\b(?:tell|note for|message) (?:my |the )?(trainer|coach|developer|dev)\b(.*)$/);
+  if (m && !NOTE) { V.utt = []; vlog(heard, 'opened note: ' + m[1]); openNote(/trainer|coach/.test(m[1]) ? 'trainer' : 'developer', m[2].trim()); return; }
+  if (NOTE && V.customDecide) { const did = V.customDecide(utt); V.utt = []; return vlog(heard, 'did: ' + did); }
   if (uniq.length > 4) return vlog(heard, 'ignored: sounded like talking');
   const h = V.handlers || {}, phrase = toks.join(' ');
   // button words first (save/skip/clear), then a screen's own number parser
@@ -391,16 +410,58 @@ function speak(text) {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text); u.rate = 1.05;
     V.speaking = true; V.ttsWords = new Set(text.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
-    u.onend = u.onerror = () => setTimeout(() => { V.speaking = false; }, 500);
+    u.onend = u.onerror = () => { setTimeout(() => { V.speaking = false; }, 500); micCheckSoon(); };
     speechSynthesis.speak(u);
   } catch {}
 }
 let actx = null;
 function unlockAudio() { try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {} }
-function beep(f = 880, ms = 160) { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); } catch {} }
+function beep(f = 880, ms = 160) { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); micCheckSoon(); } catch {} }
 let wake = null;
 async function keepAwake() { try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => wake = null); } } catch {} }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { keepAwake(); if (Date.now() - lastLoad > 5 * 60e3) loadState(true); } });
+
+
+// ---------- "Tell my trainer" / "Tell my developer" notes ----------
+// Saved to Events (Type note_trainer / note_developer) with the screen you were on; the trainer and Claude read them later.
+let NOTE = null;
+function openNote(who, start) {
+  if (NOTE) return;
+  const box = document.getElementById('noteBox');
+  NOTE = { who, text: start || '', saved: V.handlers, savedMap: SAYMAP, savedCustom: V.customDecide, screen: SCREEN, ex: CUR ? CUR.name : '' };
+  const label = who === 'trainer' ? '💬 Note for your trainer' : '🛠 Note for the developer';
+  box.innerHTML = `<div class="card" style="max-width:900px;margin:0 auto"><h2>${label}</h2>
+    <p class="dim">Just talk. Say “save note” when you’re done, or tap Save. You can also type.</p>
+    <textarea id="noteText" style="width:100%;height:220px;font:inherit;font-size:24px;padding:14px;border-radius:14px;background:#0b0c10;color:var(--fg);border:1px solid #333;-webkit-user-select:text;user-select:text"></textarea>
+    <div class="row mt"><button class="go" id="noteSave">Save note</button><button class="sm" id="noteClear">Clear</button><button class="sm stop" id="noteCancel">Cancel</button></div></div>`;
+  box.style.display = 'block';
+  const ta = document.getElementById('noteText'); ta.value = NOTE.text;
+  SAYMAP = {}; V.handlers = { custom: true }; V.utt = []; V.screenAt = Date.now();
+  V.customDecide = toks => {
+    const ph = toks.join(' ');
+    if (/^(save|save note|save it|done|that's it)$/.test(ph)) { saveNote(); return 'note saved'; }
+    if (/^(cancel|never mind|cancel note)$/.test(ph)) { closeNote(); return 'note cancelled'; }
+    ta.value = (ta.value ? ta.value + ' ' : '') + ph; return 'note text';
+  };
+  document.getElementById('noteSave').onclick = saveNote;
+  document.getElementById('noteClear').onclick = () => { ta.value = ''; };
+  document.getElementById('noteCancel').onclick = closeNote;
+}
+function saveNote() {
+  const text = (document.getElementById('noteText').value || '').trim();
+  if (!text) return toast('Nothing to save yet');
+  queue('Events', [tstr(new Date()), SESSION ? SESSION.id : '', NOTE.who === 'trainer' ? 'note_trainer' : 'note_developer', NOTE.ex, '', NOTE.screen, text, uid()]);
+  toast(NOTE.who === 'trainer' ? 'Saved for your trainer' : 'Saved for the developer');
+  closeNote();
+}
+function closeNote() {
+  if (!NOTE) return;
+  document.getElementById('noteBox').style.display = 'none';
+  V.handlers = NOTE.saved; V.customDecide = NOTE.savedCustom; V.utt = []; annotate();   // rebuild the say-words for whatever screen is showing now
+  NOTE = null;
+}
+document.getElementById('noteT').onclick = () => openNote('trainer');
+document.getElementById('noteD').onclick = () => openNote('developer');
 
 // ---------- session ----------
 let SESSION = LS.get('session', null);
@@ -418,7 +479,7 @@ function event(type, exName = '', joint = '', reason = '', detail = '') {
 
 // ---------- screens ----------
 let CUR = null;   // the set in progress
-function screen(html, handlers) { V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
+function screen(html, handlers) { if (NOTE) { $app.innerHTML = html; NOTE.saved = handlers || null; const t0 = $app.querySelector('h1,h2,h3'); NOTE.screen = t0 ? t0.textContent.slice(0, 40) : NOTE.screen; return; } V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
 function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
 
 function showSetup() {
