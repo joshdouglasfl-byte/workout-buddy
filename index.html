@@ -94,7 +94,7 @@ async function loadState(quiet) {
   try { S = await api({ action: 'state' }); LS.set('state', S); lastLoad = Date.now(); setSync(); if (!quiet) toast('Plan loaded'); }
   catch (e) { setSync('offline'); if (!quiet) toast('Could not reach the sheet, using saved copy'); }
 }
-function queue(sheet, row) { outbox.push({ sheet, row }); LS.set('outbox', outbox); setSync(); flush(); }
+function queue(sheet, row, lazy) { outbox.push({ sheet, row }); LS.set('outbox', outbox); setSync(); if (!lazy) flush(); }
 let flushing = false;
 async function flush() {
   if (flushing || !outbox.length || !CFG) return;
@@ -145,7 +145,7 @@ function allEvents() {
   const base = (S && S.events) || [];
   const have = new Set(base.map(s => s['Row ID']).filter(Boolean));
   const pend = outbox.filter(o => o.sheet === 'Events' && !have.has(o.row[7])).map(o => rowToObj('Events', o.row));
-  return base.concat(pend).map(e => ({ t: parseDate(e['Logged At']), type: e['Type'], ex: e['Exercise'], joint: e['Joint'], reason: e['Reason'], detail: e['Detail'] })).filter(e => e.t);
+  return base.concat(pend).filter(e => e['Type'] !== 'voice').map(e => ({ t: parseDate(e['Logged At']), type: e['Type'], ex: e['Exercise'], joint: e['Joint'], reason: e['Reason'], detail: e['Detail'] })).filter(e => e.t);
 }
 const setting = (k, d) => { const v = S && S.settings ? S.settings[k] : undefined; if (v === undefined || v === '') return d; const n = num(v); return (typeof d === 'number' && n != null) ? n : v; };
 
@@ -162,7 +162,7 @@ function exercises() {
     name: e['Exercise'], type: e['Day Type'], muscle: e['Primary Muscle'], oneSide: e['One Side'] === 'Yes',
     quota: num(e['Weekly Quota']) ?? setting('Default Weekly Quota', 6), repMin: num(e['Rep Min']) ?? 12, repMax: num(e['Rep Max']) ?? 15,
     target: num(e['Target Set (s)']) ?? 45, tempo: e['Tempo'] || 'Even', spr: num(e['Sec per Rep']) ?? 3,
-    equip: e['Equipment'] || '', setup: e['Setup'] || '', cue: e['Form Cue'] || '', order: num(e['Order']) ?? 50,
+    equip: e['Equipment'] || '', starts: e['Starts'] || '', setup: e['Setup'] || '', cue: e['Form Cue'] || '', order: num(e['Order']) ?? 50,
     joints: (e['Joints'] ? e['Joints'].split(/,\s*/) : JOINTS[e['Exercise']]) || []
   })).sort((a, b) => a.order - b.order);
 }
@@ -254,7 +254,7 @@ function whatsNext(opts = {}) {
 }
 
 // ---------- voice ----------
-const V = { rec: null, on: false, want: false, speaking: false, handlers: null, words: [], lastWordAt: 0, utt: [], timer: null };
+const V = { rec: null, on: false, want: false, speaking: false, handlers: null, prev: [], lastWordAt: 0, utt: [], timer: null, ttsWords: new Set() };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const NUMW = { zero: 0, none: 0, one: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, 'twenty-one': 21, 'twenty-two': 22, 'twenty-three': 23, 'twenty-four': 24, 'twenty-five': 25 };
 const SAY = {
@@ -266,58 +266,81 @@ const SAY = {
   no: /^(no|nope|wait|not now|later)$/,
   end: /^(end|end session|i'?m done|finish|all done|stop workout)$/
 };
-function voiceStart() {
+function voiceStart(why) {
   if (!SR) { toast('Voice not available here'); return; }
   V.want = true;
   if (V.on) return;
   try { V.rec && V.rec.abort(); } catch {}
   const r = new SR(); V.rec = r;
   r.lang = 'en-US'; r.continuous = true; r.interimResults = true;
-  r.onstart = () => { V.on = true; V.words = []; micUI(); };
+  r.onstart = () => { V.on = true; V.prev = []; micUI(); vlog('', 'mic on' + (why ? ' (' + why + ')' : '')); };
   r.onresult = e => {
     let text = '';
     for (let i = 0; i < e.results.length; i++) text += ' ' + e.results[i][0].transcript;
-    const words = text.toLowerCase().replace(/[.,!?]/g, '').trim().split(/\s+/).filter(Boolean);
-    if (V.speaking) { V.words = words; return; }          // ignore our own voice
+    const words = text.toLowerCase().replace(/[.,!?]/g, ' ').trim().split(/\s+/).filter(Boolean);
+    // new words = everything after the part we already saw (Safari sometimes rewrites earlier words)
+    const oldLen = V.prev.length;
+    let k = 0; while (k < oldLen && k < words.length && V.prev[k] === words[k]) k++;
+    let fresh = words.slice(k);
+    const revised = k < oldLen;                 // Safari changed a word we already had
+    V.prev = words;
+    if (V.speaking) fresh = fresh.filter(w => !V.ttsWords.has(w));   // drop our own spoken prompt
+    if (!fresh.length) return;
     const now = Date.now();
-    if (words.length > V.words.length) {
-      if (now - V.lastWordAt > 700) V.utt = [];             // a pause starts a new phrase
-      const fresh = words.slice(V.words.length);
-      V.utt = V.utt.concat(fresh);
-      V.lastWordAt = now;
-      document.querySelectorAll('.heard').forEach(h => h.textContent = '“' + V.utt.join(' ') + '”');
-      clearTimeout(V.timer);
-      V.timer = setTimeout(() => decide(V.utt.slice()), 550);  // wait to see if more words follow
-    } else if (words.length === V.words.length && words.length) {
-      // last word revised (e.g. "dun" → "done")
-      V.utt[V.utt.length - 1] = words[words.length - 1];
-    }
-    V.words = words;
+    if (now - V.lastWordAt > 900 && !revised) V.utt = [];   // a pause starts a new phrase
+    V.utt = revised ? V.utt.slice(0, Math.max(0, V.utt.length - (oldLen - k))).concat(fresh) : V.utt.concat(fresh);
+    V.lastWordAt = now;
+    document.querySelectorAll('.heard').forEach(h => h.textContent = '“' + V.utt.join(' ') + '”');
+    clearTimeout(V.timer);
+    V.timer = setTimeout(() => decide(V.utt.slice()), 450);  // short wait to see if more words follow
   };
-  r.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; toast('Microphone not allowed'); } };
-  r.onend = () => { V.on = false; micUI(); if (V.want) setTimeout(() => { try { voiceStart(); } catch {} }, 300); };
-  try { r.start(); } catch {}
+  r.onerror = e => {
+    vlog('', 'mic error: ' + e.error);
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; toast('Microphone not allowed'); }
+  };
+  r.onend = () => { V.on = false; micUI(); vlog('', 'mic stopped'); if (V.want) setTimeout(() => { try { voiceStart('auto restart'); } catch (err) { vlog('', 'restart failed: ' + err.message); } }, 300); };
+  try { r.start(); } catch (err) { vlog('', 'start failed: ' + err.message); }
 }
+// if the mic quietly dropped, bring it back
+setInterval(() => { if (V.want && !V.on) voiceStart('watchdog'); }, 4000);
 function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
 function micUI() { const el = document.getElementById('mic'); el.className = 'pill' + (V.on ? ' on' : ''); el.textContent = V.on ? '🎙 listening' : '🎙 off'; }
-document.getElementById('mic').onclick = () => { unlockAudio(); V.on ? voiceStop() : voiceStart(); };
+document.getElementById('mic').onclick = () => { unlockAudio(); V.on ? voiceStop() : voiceStart('tap'); };
+const FILLER = new Set(['uh', 'um', 'umm', 'hmm', 'so', 'and', 'the', 'oh', 'ah', 'like', 'please', 'now']);
+// Command words that count on their own inside a short phrase ("ready ready ready", "okay go")
+const WORD = { ready: /^(ready|go|start|begin|redi)$/, done: /^(done|dun|dunn|dona|don|finished|finish)$/, skip: /^skip$/, yes: /^(yes|yeah|yep|okay|ok|running|good|save|sure)$/, no: /^(no|nope|wait|later)$/, next: /^next$/ };
 function decide(utt) {
-  if (!utt.length || utt.length > 3 || !V.handlers) return;   // long phrases are just talking
-  const phrase = utt.join(' ');
-  const h = V.handlers;
-  for (const k of Object.keys(SAY)) if (h[k] && SAY[k].test(phrase)) { V.utt = []; h[k](); return; }
+  const heard = utt.join(' ');
+  if (!utt.length) return;
+  if (!V.handlers) return vlog(heard, 'ignored: nothing to do on this screen');
+  // collapse repeats and fillers: "ready ready ready" → "ready"
+  const toks = utt.filter(w => !FILLER.has(w)).filter((w, i, a) => i === 0 || w !== a[i - 1]);
+  const uniq = [...new Set(toks)];
+  if (uniq.length > 4) return vlog(heard, 'ignored: sounded like talking');
+  const h = V.handlers, phrase = toks.join(' ');
+  const fire = (k, fn) => { V.utt = []; if (V.speaking) try { speechSynthesis.cancel(); } catch {} vlog(heard, 'did: ' + k); fn(); };
+  for (const k of Object.keys(SAY)) if (h[k] && SAY[k].test(phrase)) return fire(k, h[k]);
+  if (uniq.length <= 3) for (const w of uniq) for (const k of Object.keys(WORD)) if (h[k] && WORD[k].test(w)) return fire(k, h[k]);
   if (h.number) {
-    const w = utt[utt.length - 1]; const n = /^\d+$/.test(w) ? +w : NUMW[w];
-    if (n != null && utt.length <= 2) { V.utt = []; h.number(n, w); }
+    for (let i = toks.length - 1; i >= 0; i--) {
+      const w = toks[i]; const n = /^\d+$/.test(w) ? +w : NUMW[w];
+      if (n != null && uniq.length <= 3) { V.utt = []; vlog(heard, 'did: number ' + n); return h.number(n, w); }
+    }
   }
+  vlog(heard, 'ignored: no match for this screen (' + Object.keys(h).join('/') + ')');
+}
+// Voice log: one row per phrase heard and what the app did, kept in the Events tab (Type = voice)
+let SCREEN = '';
+function vlog(heard, action) {
+  try { queue('Events', [tstr(new Date()), SESSION ? SESSION.id : '', 'voice', SCREEN, '', action, heard, uid()], true); } catch {}
 }
 function speak(text) {
   if (!('speechSynthesis' in window) || !LS.get('talk', true)) return;
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text); u.rate = 1.05;
-    V.speaking = true;
-    u.onend = u.onerror = () => setTimeout(() => { V.speaking = false; V.utt = []; }, 400);
+    V.speaking = true; V.ttsWords = new Set(text.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
+    u.onend = u.onerror = () => setTimeout(() => { V.speaking = false; }, 500);
     speechSynthesis.speak(u);
   } catch {}
 }
@@ -344,7 +367,7 @@ function event(type, exName = '', joint = '', reason = '', detail = '') {
 
 // ---------- screens ----------
 let CUR = null;   // the set in progress
-function screen(html, handlers) { $app.innerHTML = html; V.handlers = handlers || null; window.scrollTo(0, 0); }
+function screen(html, handlers) { $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; }
 function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
 
 function showSetup() {
@@ -389,7 +412,7 @@ function home() {
 
 function watchGate(next) {
   if (setting('Watch Reminder', 'Yes') !== 'Yes') { newSession(); return next(); }
-  speak('Start your Apple Watch workout. Say running when it is going.');
+  speak('Start your Apple Watch workout.');
   screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>Start your Apple Watch workout</h1><p class="dim" style="font-size:26px">Traditional Strength Training. Say “running” or tap when it’s going.</p>
     <button class="go mt" id="ok" style="width:70%">Watch is running</button><div class="mt"><button class="sm" id="cancel">Back</button></div><div class="heard"></div></div>`,
     { yes: ok });
@@ -440,22 +463,22 @@ function prep(name, opts = {}) {
   SESSION.type = SESSION.type || ex.type; saveSession();
   const plan = planFor(name);
   const note = plan && plan['Trainer Note'];
-  speak(`${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''} Say ready.`);
+  speak(`${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''}`);
   screen(`<div class="card"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3><h1>${esc(name)}</h1>
      <div class="big">${fmtW(w.w)}</div><div class="dim">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
      ${changes.length ? `<div class="change">${changes.map(esc).join(' · ')}</div>` : ''}
      <div class="setup mt">${esc(ex.setup)}</div><div class="cue">${esc(ex.cue)}</div>
      ${note ? `<div class="cue">Trainer: ${esc(note)}</div>` : ''}
-     <div class="dim mt">${ex.repMin}–${ex.repMax} reps · about ${ex.target}s · tempo ${esc(ex.tempo)}, ${ex.spr}s per rep</div></div>
+     <div class="dim mt">${ex.repMin}–${ex.repMax} reps · about ${ex.target}s · tempo ${esc(ex.tempo)}, ${+repPlan(ex).total.toFixed(1)}s per rep with pauses</div></div>
      <button class="go" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button>
      <div class="row mt"><button class="sm" id="skip">Skip</button><button class="sm" id="other">Different exercise</button><button class="sm stop" id="end">End session</button></div>
      <div class="heard center"></div>`,
-    { ready: startSet, skip: () => skipFlow(name), end: endFlow });
-  on('go', startSet); on('skip', () => skipFlow(name)); on('other', pickExercise); on('end', endFlow);
+    { ready: () => startSet(), skip: () => skipFlow(name), end: endFlow });
+  on('go', () => startSet()); on('skip', () => skipFlow(name)); on('other', pickExercise); on('end', endFlow);
 }
 
 function jointCheck(ex, joints) {
-  speak(`Your ${joints.join(' and ')} was flagged. Try ${ex.name} now, or wait?`);
+  speak(`Your ${joints.join(' and ')} was flagged. Try ${ex.name} now?`);
   screen(`<div class="card"><h3>Joint check</h3><h1>${esc(ex.name)}</h1><p style="font-size:28px">Your <b class="warn">${joints.map(esc).join(', ')}</b> was flagged. Good to try this now?</p></div>
     <div class="row"><button class="go" id="y">Try it (lighter)</button><button id="n">Wait</button></div>
     <div class="mt"><button class="sm" id="clr" style="width:100%">It’s fine now, clear the flag</button></div><div class="heard center"></div>`,
@@ -466,38 +489,67 @@ function jointCheck(ex, joints) {
   on('clr', () => { joints.forEach(j => event('joint_clear', ex.name, j)); prep(ex.name, { jointOk: true }); });
 }
 
-// Tempo guide: fraction of each rep spent lifting
+// Tempo guide. Each rep = first move, hold, second move, hold. "Sec per Rep" is movement time; holds are added.
 const upFrac = t => /1\/3 up/i.test(t) ? 1 / 3 : /2\/3 up/i.test(t) ? 2 / 3 : 0.5;
+const DOWN_FIRST = new Set(['Squats', 'Incline Bench Press']);   // exercises that start at the top
+const downFirst = ex => ex.starts ? /down/i.test(ex.starts) : DOWN_FIRST.has(ex.name);
+function repPlan(ex) {
+  const hold = setting('Pause at Turn (s)', 0.5), mv = ex.spr, uf = upFrac(ex.tempo);
+  const up = { kind: 'UP', t: mv * uf, from: 0, to: 1 }, dn = { kind: 'DOWN', t: mv * (1 - uf), from: 1, to: 0 };
+  const seq = downFirst(ex) ? [dn, { kind: 'HOLD', t: hold, at: 0 }, up, { kind: 'HOLD', t: hold, at: 1 }]
+                            : [up, { kind: 'HOLD', t: hold, at: 1 }, dn, { kind: 'HOLD', t: hold, at: 0 }];
+  return { seq, total: seq.reduce((a, p) => a + p.t, 0) };
+}
 let setTimer = null;
-function startSet() {
+// Get-set countdown so the clock doesn't start while you're picking up the weights
+function startSet(short) {
   const ex = CUR.ex;
-  CUR.start = Date.now();
-  screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''}</h3>
+  let left = short ? 3 : setting('Get Set (s)', 5);
+  clearInterval(setTimer);
+  screen(`<div class="center" style="padding-top:20px"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3><h2>Get set</h2>
+    <div class="huge" id="cd" style="font-size:220px">${left}</div>
+    <button class="go mt" id="now" style="width:70%">Start now</button><div class="heard"></div></div>`, { ready: begin });
+  on('now', begin);
+  setTimer = setInterval(() => {
+    left--; const el = document.getElementById('cd'); if (!el) return clearInterval(setTimer);
+    if (left <= 0) return begin();
+    el.textContent = left; if (left <= 3) beep(660, 120);
+  }, 1000);
+  let started = false;
+  function begin() { if (started) return; started = true; clearInterval(setTimer); beep(1046, 220); runSet(); }
+}
+function runSet() {
+  const ex = CUR.ex, plan = repPlan(ex);
+  CUR.start = Date.now(); CUR.repSecs = plan.total;
+  const colors = { UP: 'var(--acc)', DOWN: '#f08a3c', HOLD: '#6b7280' };
+  screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3>
       <div class="huge" id="clock">0</div><div class="dim" style="font-size:26px">seconds · target ${ex.target}s</div>
-      <div class="big mt" id="reps">0</div><div class="dim">reps at ${ex.spr}s each</div></div>
-      <div style="flex:1"><div id="tempo"><i id="tb"></i></div><div id="tempoLbl">UP</div></div></div>
-      <button class="stop mt" id="done" style="width:100%;font-size:48px;min-height:160px">DONE</button><div class="heard center"></div>`,
+      <div class="big mt" id="reps">0</div><div class="dim">reps at the guide's pace (${+plan.total.toFixed(1)}s each)</div></div>
+      <div style="flex:1"><div id="tempo" style="height:440px;width:170px"><i id="tb"></i></div><div id="tempoLbl" style="font-size:40px">—</div></div></div>
+      <button class="stop mt" id="done" style="width:100%;font-size:48px;min-height:150px">DONE</button><div class="heard center"></div>`,
     { done: finishSet });
   on('done', finishSet);
-  const uf = upFrac(ex.tempo), spr = ex.spr * 1000;
-  let beeped = false;
+  let beeped = false, lastKind = '';
   clearInterval(setTimer);
   setTimer = setInterval(() => {
-    const el = Date.now() - CUR.start, s = el / 1000;
+    const s = (Date.now() - CUR.start) / 1000;
     const c = document.getElementById('clock'); if (!c) return clearInterval(setTimer);
     c.textContent = Math.floor(s);
-    document.getElementById('reps').textContent = Math.floor(el / spr);
-    const ph = (el % spr) / spr;
-    const up = ph < uf, h = up ? ph / uf : 1 - (ph - uf) / (1 - uf);
-    document.getElementById('tb').style.height = (h * 100) + '%';
-    document.getElementById('tempoLbl').textContent = up ? 'UP' : 'DOWN';
+    document.getElementById('reps').textContent = Math.floor(s / plan.total);
+    let t = s % plan.total, ph = plan.seq[0];
+    for (const p of plan.seq) { if (t < p.t) { ph = p; break; } t -= p.t; }
+    const pos = ph.kind === 'HOLD' ? ph.at : ph.from + (ph.to - ph.from) * (t / ph.t);
+    const bar = document.getElementById('tb');
+    bar.style.height = (8 + pos * 92) + '%'; bar.style.background = colors[ph.kind];
+    const lbl = document.getElementById('tempoLbl');
+    if (ph.kind !== lastKind) { lbl.textContent = ph.kind; lbl.style.color = colors[ph.kind]; lastKind = ph.kind; }
     if (!beeped && s >= ex.target) { beeped = true; beep(1046, 250); c.classList.add('ok'); }
-  }, 50);
+  }, 40);
 }
 function finishSet() {
   clearInterval(setTimer);
   CUR.dur = Math.round((Date.now() - CUR.start) / 1000);
-  CUR.est = Math.max(1, Math.round(CUR.dur / CUR.ex.spr));
+  CUR.est = Math.max(1, Math.round(CUR.dur / (CUR.repSecs || CUR.ex.spr)));
   repsScreen();
 }
 function repsScreen() {
@@ -515,10 +567,10 @@ function repsScreen() {
     CUR.sides.push({ side: CUR.side, reps, dur: CUR.dur });
     if (CUR.ex.oneSide && CUR.sides.length === 1) {
       CUR.side = CUR.first === 'Right' ? 'Left' : 'Right';
-      speak(`${CUR.side} side. Go when ready.`);
+      speak(`${CUR.side} side.`);
       screen(`<div class="center" style="padding-top:30px"><h3>No rest, switch sides</h3><h1>${CUR.side} side</h1><div class="big">${fmtW(CUR.weight)}</div>
-        <button class="go mt" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button><div class="heard"></div></div>`, { ready: startSet });
-      on('go', startSet);
+        <button class="go mt" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button><div class="heard"></div></div>`, { ready: () => startSet(true) });
+      on('go', () => startSet(true));
       return;
     }
     effortScreen();
@@ -622,7 +674,7 @@ function rest(tweak) {
     const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
     const el = document.getElementById('rc'); if (!el) return clearInterval(restTimer);
     el.textContent = left;
-    if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); speak(nextName ? `Ready when you are. ${nextName}.` : 'Rest done.'); }
+    if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); speak(nextName ? `Rest is up. ${nextName}.` : 'Rest is up.'); }
   }, 250);
   function goNext() { clearInterval(restTimer); if (!nextName) return summary(); if (nextName !== CUR.name) CUR.nextWeight = undefined; prep(nextName); }
 }
