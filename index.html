@@ -40,6 +40,8 @@ button.sel{outline:4px solid var(--acc)}
 .toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:#222833;padding:14px 24px;border-radius:16px;font-size:20px;opacity:0;transition:.3s;pointer-events:none}
 .toast.show{opacity:1}
 input{font:inherit;font-size:22px;width:100%;padding:16px;border-radius:14px;border:1px solid #333;background:#0b0c10;color:var(--fg);-webkit-user-select:text;user-select:text}
+.say{text-decoration:underline;text-decoration-thickness:4px;text-underline-offset:6px;text-decoration-color:var(--warn)}
+button .say{color:inherit}
 .center{text-align:center}
 .mt{margin-top:16px}
 </style>
@@ -167,6 +169,7 @@ function exercises() {
   })).sort((a, b) => a.order - b.order);
 }
 const exByName = n => exercises().find(e => e.name === n);
+const NAME_SAY = { 'Squats': 'squats', 'Single Arm Row': 'row', 'Incline Bench Press': 'incline', 'Lateral Shoulder Raise': 'lateral', 'Tricep Kickback': 'kickback', 'Sup Dumbbell Curls': 'curls', 'DB Over Press': 'overhead', 'Leg Raises': 'leg', 'Reverse Crunch': 'crunch', 'Plank Hip Dip': 'plank', 'Mountain Climbers': 'climbers', 'Dead Bug': 'bug', 'Heel Tap': 'heel' };
 const planFor = n => ((S && S.plan) || []).find(p => p['Exercise'] === n);
 
 // Week math (week starts Monday)
@@ -324,22 +327,52 @@ const WORD = { ready: /^(ready|go|start|begin|redi)$/, done: /^(done|dun|dunn|do
 function decide(utt) {
   const heard = utt.join(' ');
   if (!utt.length) return;
-  if (!V.handlers) return vlog(heard, 'ignored: nothing to do on this screen');
+  if (!V.handlers && !Object.keys(SAYMAP).length) return vlog(heard, 'ignored: nothing to do on this screen');
   // collapse repeats and fillers: "ready ready ready" → "ready"
   const toks = utt.filter(w => !FILLER.has(w)).filter((w, i, a) => i === 0 || w !== a[i - 1]);
   const uniq = [...new Set(toks)];
   if (uniq.length > 4) return vlog(heard, 'ignored: sounded like talking');
-  const h = V.handlers, phrase = toks.join(' ');
+  const h = V.handlers || {}, phrase = toks.join(' ');
   const fire = (k, fn) => { V.utt = []; if (V.speaking) try { speechSynthesis.cancel(); } catch {} vlog(heard, 'did: ' + k); fn(); };
   for (const k of Object.keys(SAY)) if (h[k] && SAY[k].test(phrase)) return fire(k, h[k]);
   if (uniq.length <= 3) for (const w of uniq) for (const k of Object.keys(WORD)) if (h[k] && WORD[k].test(w)) return fire(k, h[k]);
+  // a button's underlined word (or words)
+  if (uniq.length <= 3) {
+    const hitKey = Object.keys(SAYMAP).find(k => k.includes(' ') ? phrase.includes(k) : uniq.includes(k));
+    if (hitKey) { const b = SAYMAP[hitKey]; V.utt = []; vlog(heard, 'pressed: ' + hitKey); if (V.speaking) try { speechSynthesis.cancel(); } catch {} b.click(); return; }
+  }
   if (h.number) {
     for (let i = toks.length - 1; i >= 0; i--) {
       const w = toks[i]; const n = /^\d+$/.test(w) ? +w : NUMW[w];
       if (n != null && uniq.length <= 3) { V.utt = []; vlog(heard, 'did: number ' + n); return h.number(n, w); }
     }
   }
-  vlog(heard, 'ignored: no match for this screen (' + Object.keys(h).join('/') + ')');
+  vlog(heard, 'ignored: no match for this screen (' + Object.keys(h).concat(Object.keys(SAYMAP)).join('/') + ')');
+}
+
+// Underline the word you can say on each button, and let saying it press the button
+const SAY_STOP = new Set(['too', 'a', 'an', 'the', "it's", 'its', 'i', 'my', 'this', 'that', 'felt', 'not', 'out', 'of', 'on', 'it', 'is', 'for', 'to', 'now', 'or', 'and', 'with']);
+let SAYMAP = {};
+function annotate() {
+  SAYMAP = {};
+  $app.querySelectorAll('button').forEach(b => {
+    if (b.dataset.say === '-') return;
+    let say = (b.dataset.say || '').toLowerCase();
+    const textNode = [...b.childNodes].find(n => n.nodeType === 3 && /[a-z]/i.test(n.textContent));
+    if (!say && textNode) say = (textNode.textContent.toLowerCase().match(/[a-z']+/g) || []).find(w => !SAY_STOP.has(w) && w.length > 1) || '';
+    if (!say || SAYMAP[say]) return;            // skip duplicates on the same screen
+    SAYMAP[say] = b;
+    if (textNode) {
+      const i = textNode.textContent.toLowerCase().indexOf(say);
+      if (i >= 0) {
+        const t = textNode.textContent, span = document.createElement('span');
+        span.className = 'say'; span.textContent = t.slice(i, i + say.length);
+        const frag = document.createDocumentFragment();
+        frag.append(t.slice(0, i), span, t.slice(i + say.length));
+        textNode.replaceWith(frag);
+      }
+    }
+  });
 }
 // Voice log: one row per phrase heard and what the app did, kept in the Events tab (Type = voice)
 let SCREEN = '';
@@ -379,7 +412,7 @@ function event(type, exName = '', joint = '', reason = '', detail = '') {
 
 // ---------- screens ----------
 let CUR = null;   // the set in progress
-function screen(html, handlers) { $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; }
+function screen(html, handlers) { $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
 function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
 
 function showSetup() {
@@ -392,6 +425,10 @@ function showSetup() {
 
 function home() {
   if (!CFG) return showSetup();
+  if (SESSION && !sessionAlive() && SESSION.log && SESSION.log.length && !SESSION.ended) {
+    SESSION.ended = true; saveSession(); event('session_end', '', '', 'Timed out', `${SESSION.log.length} sets`);
+    return watchEnd(summary);
+  }
   if (!S) { screen(`<h1>Loading…</h1>`); loadState().then(() => S ? home() : showSetup()); return; }
   const n = whatsNext();
   const alive = sessionAlive();
@@ -426,7 +463,7 @@ function watchGate(next) {
   if (setting('Watch Reminder', 'Yes') !== 'Yes') { newSession(); return next(); }
   speak('Start your Apple Watch workout.');
   screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>Start your Apple Watch workout</h1><p class="dim" style="font-size:26px">Traditional Strength Training. Say “running” or tap when it’s going.</p>
-    <button class="go mt" id="ok" style="width:70%">Watch is running</button><div class="mt"><button class="sm" id="cancel">Back</button></div><div class="heard"></div></div>`,
+    <button class="go mt" id="ok" style="width:70%" data-say="running">Watch is running</button><div class="mt"><button class="sm" id="cancel">Back</button></div><div class="heard"></div></div>`,
     { yes: ok });
   function ok() { newSession(); event('session_start', '', '', '', 'watch confirmed'); next(); }
   on('ok', ok); on('cancel', home);
@@ -434,7 +471,7 @@ function watchGate(next) {
 
 function pickExercise() {
   const n = whatsNext();
-  screen(`<h2>Pick an exercise</h2><div class="grid2">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div><button class="mt" id="back" style="width:100%">Back</button>`);
+  screen(`<h2>Pick an exercise</h2><div class="grid2">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" data-say="${NAME_SAY[i.ex.name] || ''}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div><button class="mt" id="back" style="width:100%">Back</button>`);
   document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { const x = b.dataset.x; if (!sessionAlive()) watchGate(() => prep(x)); else prep(x); });
   on('back', home);
 }
@@ -483,7 +520,7 @@ function prep(name, opts = {}) {
      ${note ? `<div class="cue">Trainer: ${esc(note)}</div>` : ''}
      <div class="dim mt">${ex.repMin}–${ex.repMax} reps · about ${ex.target}s · tempo ${esc(ex.tempo)}, ${+repPlan(ex).total.toFixed(1)}s per rep with pauses</div></div>
      <button class="go" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button>
-     <div class="row mt"><button class="sm" id="skip">Skip</button><button class="sm" id="other">Different exercise</button><button class="sm stop" id="end">End session</button></div>
+     <div class="row mt"><button class="sm" id="skip">Skip</button><button class="sm" id="other" data-say="different">Different exercise</button><button class="sm stop" id="end">End session</button></div>
      <div class="heard center"></div>`,
     { ready: () => startSet(), skip: () => skipFlow(name), end: endFlow });
   on('go', () => startSet()); on('skip', () => skipFlow(name)); on('other', pickExercise); on('end', endFlow);
@@ -492,8 +529,8 @@ function prep(name, opts = {}) {
 function jointCheck(ex, joints) {
   speak(`Your ${joints.join(' and ')} was flagged. Try ${ex.name} now?`);
   screen(`<div class="card"><h3>Joint check</h3><h1>${esc(ex.name)}</h1><p style="font-size:28px">Your <b class="warn">${joints.map(esc).join(', ')}</b> was flagged. Good to try this now?</p></div>
-    <div class="row"><button class="go" id="y">Try it (lighter)</button><button id="n">Wait</button></div>
-    <div class="mt"><button class="sm" id="clr" style="width:100%">It’s fine now, clear the flag</button></div><div class="heard center"></div>`,
+    <div class="row"><button class="go" id="y" data-say="try">Try it (lighter)</button><button id="n">Wait</button></div>
+    <div class="mt"><button class="sm" id="clr" style="width:100%" data-say="clear">It’s fine now, clear the flag</button></div><div class="heard center"></div>`,
     { yes: tryIt, no: wait });
   function tryIt() { event('joint_try', ex.name, joints.join(', ')); prep(ex.name, { jointOk: true, lighter: true }); }
   function wait() { event('joint_wait', ex.name, joints.join(', ')); toast(`Won't ask about ${ex.name} for ${setting('Injury Recheck (h)', 48)} hours`); nextUp([ex.name]); }
@@ -569,7 +606,7 @@ function repsScreen() {
   const draw = () => { document.getElementById('rv').textContent = reps; };
   speak('How many reps?');
   screen(`<div class="center"><h3>${esc(CUR.name)}${CUR.ex.oneSide ? ` · ${CUR.side} side` : ''} · ${CUR.dur}s</h3><h2>How many reps?</h2>
-    <div class="row" style="align-items:center"><button id="m" style="flex:0 0 160px;font-size:60px">−</button><div class="huge" id="rv">${reps}</div><button id="p" style="flex:0 0 160px;font-size:60px">+</button></div>
+    <div class="row" style="align-items:center"><button id="m" data-say="-" style="flex:0 0 160px;font-size:60px">−</button><div class="huge" id="rv">${reps}</div><button id="p" data-say="-" style="flex:0 0 160px;font-size:60px">+</button></div>
     <button class="go mt" id="ok" style="width:100%">Save ${'reps'}</button><div class="heard"></div></div>`,
     { number: n => { reps = n; draw(); setTimeout(save, 700); }, yes: () => save() });
   on('m', () => { reps = Math.max(0, reps - 1); draw(); }); on('p', () => { reps++; draw(); }); on('ok', save);
@@ -593,7 +630,7 @@ function effortScreen() {
   speak('Reps left in the tank?');
   screen(`<div class="center"><h2>How many reps did you have left?</h2>
     <div class="chips"><button id="r0">0</button><button id="r2">2</button><button id="r4">4+</button></div>
-    <button class="mt sm" id="off" style="width:100%">⚠️ This felt off (pain or odd fatigue)</button><div class="heard"></div></div>`,
+    <button class="mt sm" id="off" style="width:100%" data-say="off">⚠️ This felt off (pain or odd fatigue)</button><div class="heard"></div></div>`,
     { number: n => pick(n >= 4 ? '4+' : n >= 2 ? '2' : '0') });
   on('r0', () => pick('0')); on('r2', () => pick('2')); on('r4', () => pick('4+'));
   on('off', () => { off = !off; document.getElementById('off').classList.toggle('sel', off); });
@@ -608,8 +645,8 @@ function tempoScreen() {
   const t = CUR.ex.tempo;
   speak('Did the tempo fit?');
   screen(`<div class="center"><h2>Did the tempo fit?</h2><p class="dim">Now: ${esc(t)}, ${CUR.ex.spr}s per rep</p>
-    <button class="go" id="g" style="width:100%">Felt right</button>
-    <h3 class="mt">Or switch the pattern</h3><div class="chips"><button class="sm" data-t="Even">Even up and down</button><button class="sm" data-t="1/3 up 2/3 down">⅓ up, ⅔ down</button><button class="sm" data-t="2/3 up 1/3 down">⅔ up, ⅓ down</button></div>
+    <button class="go" id="g" style="width:100%" data-say="right">Felt right</button>
+    <h3 class="mt">Or switch the pattern</h3><div class="chips"><button class="sm" data-t="Even" data-say="even">Even up and down</button><button class="sm" data-t="1/3 up 2/3 down" data-say="slow down">Slow down (⅓ up, ⅔ down)</button><button class="sm" data-t="2/3 up 1/3 down" data-say="slow up">Slow up (⅔ up, ⅓ down)</button></div>
     <div class="chips mt"><button class="sm" data-s="-0.5">Faster reps</button><button class="sm" data-s="0.5">Slower reps</button></div><div class="heard"></div></div>`,
     { yes: () => done('Good') });
   on('g', () => done('Good'));
@@ -676,7 +713,7 @@ function rest(tweak) {
   }
   screen(`<div class="row"><div class="card center" style="flex:0 0 300px"><h3>Rest</h3><div class="huge" id="rc">${secs}</div></div><div class="card">${nextHtml}</div></div>
     ${tweak && p && p.ex.name === CUR.name ? `<div class="card"><b>${tweak.msg} ${fmtW(tweak.w)}?</b><div class="row mt"><button class="sm go" id="ty">Yes, change it</button><button class="sm" id="tn">Keep ${fmtW(CUR.weight)}</button></div></div>` : ''}
-    <div class="row"><button class="go" id="go">Ready</button><button id="skip">Skip that</button><button class="stop" id="end">End session</button></div><div class="heard center"></div>`,
+    <div class="row"><button class="go" id="go">Ready</button><button id="skip" data-say="skip">Skip that</button><button class="stop" id="end">End session</button></div><div class="heard center"></div>`,
     { ready: goNext, skip: () => nextName && skipFlow(nextName), end: endFlow, next: goNext });
   if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
   on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
@@ -688,19 +725,20 @@ function rest(tweak) {
     el.textContent = left;
     if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); speak(nextName ? `Rest is up. ${nextName}.` : 'Rest is up.'); }
   }, 250);
-  function goNext() { clearInterval(restTimer); if (!nextName) return summary(); if (nextName !== CUR.name) CUR.nextWeight = undefined; prep(nextName); }
+  function goNext() { clearInterval(restTimer); if (!nextName) { event('session_end', '', '', 'Nothing left', `${SESSION.log.length} sets`); return watchEnd(summary); } if (nextName !== CUR.name) CUR.nextWeight = undefined; prep(nextName); }
 }
 function nextUp(exclude) {
   const n = whatsNext({ exclude: (SESSION ? SESSION.skipped : []).concat(exclude || []), moveOn: true });
-  if (!n.pick) { toast('Nothing else available right now'); return SESSION && SESSION.log.length ? summary() : home(); }
+  if (!n.pick) { toast('Nothing else available right now'); if (SESSION && SESSION.log.length) { event('session_end', '', '', 'Nothing left', `${SESSION.log.length} sets`); return watchEnd(summary); } return home(); }
   prep(n.pick.ex.name);
 }
 
 const SKIP_REASONS = ['Too tired', 'Joint hurts', 'Short on time', 'Equipment', 'Not feeling it', 'Other'];
+const REASON_SAY = { 'Too tired': 'tired', 'Joint hurts': 'joint', 'Short on time': 'time', 'Equipment': 'equipment', 'Not feeling it': 'feeling', 'Other': 'other', 'Done for now': 'done', 'Something hurts': 'hurts', 'Out of time': 'time' };
 function skipFlow(name) {
   clearInterval(restTimer);
   speak('Why skip?');
-  screen(`<h2>Why skip ${esc(name)}?</h2><div class="chips">${SKIP_REASONS.map(r => `<button data-r="${r}">${r}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Never mind</button>`);
+  screen(`<h2>Why skip ${esc(name)}?</h2><div class="chips">${SKIP_REASONS.map(r => `<button data-r="${r}" data-say="${REASON_SAY[r]}">${r}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Never mind</button>`);
   document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
     const r = b.dataset.r;
     const fin = joint => { event('skip', name, joint || '', r); if (joint) event('joint_flag', name, joint, 'flagged on skip'); SESSION.skipped.push(name); saveSession(); nextUp([name]); };
@@ -717,9 +755,17 @@ const QUIT_REASONS = ['Done for now', 'Too tired', 'Something hurts', 'Out of ti
 function endFlow() {
   clearInterval(restTimer); clearInterval(setTimer);
   if (!SESSION || !SESSION.log.length) { SESSION = null; LS.set('session', null); return home(); }
-  screen(`<h2>Wrapping up. Why stop here?</h2><div class="chips">${QUIT_REASONS.map(r => `<button data-r="${r}">${r}</button>`).join('')}</div>`, { yes: () => finish('Done for now') });
+  screen(`<h2>Wrapping up. Why stop here?</h2><div class="chips">${QUIT_REASONS.map(r => `<button data-r="${r}" data-say="${REASON_SAY[r]}">${r}</button>`).join('')}</div>`, { yes: () => finish('Done for now') });
   document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { const r = b.dataset.r; if (r === 'Something hurts') jointPicker(j => { event('joint_flag', '', j, 'flagged on quit'); finish(r); }); else finish(r); });
-  function finish(r) { event('session_end', '', '', r, `${SESSION.log.length} sets`); summary(); }
+  function finish(r) { event('session_end', '', '', r, `${SESSION.log.length} sets`); watchEnd(summary); }
+}
+function watchEnd(next) {
+  if (setting('Watch Reminder', 'Yes') !== 'Yes') return next();
+  speak('Stop your Apple Watch workout.');
+  screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>End your Apple Watch workout</h1><p class="dim" style="font-size:26px">Swipe right on the watch and tap End, so the calories save to Health.</p>
+    <button class="go mt" id="ok" style="width:70%" data-say="stopped">Watch is stopped</button><div class="heard"></div></div>`, { yes: ok });
+  function ok() { event('watch_end', '', '', '', 'watch stopped'); next(); }
+  on('ok', ok);
 }
 function summary() {
   clearInterval(restTimer);
