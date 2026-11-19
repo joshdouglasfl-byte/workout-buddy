@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119151230';   // set automatically on each commit
+const APP_VERSION = '20261119152119';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1196,7 +1196,7 @@ function runSet(getSet = 0) {
     lastCount = -1;
   }
   function begin() {
-    CUR.start = zero; beep(1046, 220);
+    CUR.start = zero;                  // no start tone: it ran over the first "Down!"
     if (paceOn) micPause();
     const c = document.getElementById('clock'); if (c) c.style.color = '';
     const l = document.getElementById('clockLbl'); if (l) l.textContent = 'seconds · target ' + ex.target + 's';
