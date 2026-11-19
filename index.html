@@ -404,11 +404,20 @@ let SCREEN = '';
 function vlog(heard, action) {
   try { queue('Events', [tstr(new Date()), SESSION ? SESSION.id : '', 'voice', SCREEN, '', action, heard, uid()], true); } catch {}
 }
+// Pick the most natural installed English voice: your saved choice, else Premium, then Enhanced, then the default
+function voices() { try { return speechSynthesis.getVoices().filter(v => /^en[-_]/i.test(v.lang)); } catch { return []; } }
+function voiceScore(v) { const n = v.name + ' ' + v.voiceURI; return (/premium/i.test(n) ? 100 : /enhanced/i.test(n) ? 50 : 0) + (/en[-_]US/i.test(v.lang) ? 5 : 0) + (/compact|eloquence|novelty|bad news|bells|boing|bubbles|cellos|whisper|zarvox|trinoids|organ|superstar|jester|wobble|albert|fred|junior|ralph/i.test(n) ? -200 : 0); }
+function bestVoice() {
+  const vs = voices(); const want = LS.get('voice', '');
+  return vs.find(v => v.voiceURI === want) || vs.slice().sort((a, b) => voiceScore(b) - voiceScore(a))[0] || null;
+}
+try { speechSynthesis.onvoiceschanged = () => {}; speechSynthesis.getVoices(); } catch {}
 function speak(text) {
   if (!('speechSynthesis' in window) || !LS.get('talk', true)) return;
   try {
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text); u.rate = 1.05;
+    const u = new SpeechSynthesisUtterance(text); u.rate = 1.0;
+    const bv = bestVoice(); if (bv) { u.voice = bv; u.lang = bv.lang; }
     V.speaking = true; V.ttsWords = new Set(text.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
     u.onend = u.onerror = () => { setTimeout(() => { V.speaking = false; }, 500); micCheckSoon(); };
     speechSynthesis.speak(u);
@@ -514,7 +523,7 @@ function home() {
   screen(`${card}
     <div class="row"><button class="go" id="go">${alive ? 'Continue' : 'Start'}</button><button id="pickx">Pick exercise</button></div>
     <div class="card mt"><div class="row" style="align-items:center"><div><h3>This week</h3><b>${n.totD} of ${n.totQ} sets</b> · <span class="${n.pace.cls}">${n.pace.text}</span></div><div style="flex:0 0 120px"><button class="sm" id="wk">Details</button></div></div><div class="bar mt"><i style="width:${weekPct}%"></i></div></div>
-    <div class="row"><button class="sm" id="hurt">Flag a hurt joint</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button></div>
+    <div class="row"><button class="sm" id="hurt">Flag a hurt joint</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button><button class="sm" id="pickv" data-say="-">Choose voice</button></div>
     <div class="heard center"></div>`,
     { ready: go, next: go, yes: go });
   function go() { keepAwake(); if (!V.want) voiceStart(); if (!p) return; if (!alive) watchGate(() => prep(p.ex.name)); else prep(p.ex.name); }
@@ -524,8 +533,20 @@ function home() {
   on('hurt', () => jointPicker(j => { event('joint_flag', '', j, 'flagged from home'); toast(`${j} flagged`); home(); }));
   on('refresh', async () => { await loadState(); home(); });
   on('talk', () => { LS.set('talk', !LS.get('talk', true)); home(); });
+  on('pickv', voicePicker);
 }
 
+function voicePicker() {
+  const vs = voices().sort((a, b) => voiceScore(b) - voiceScore(a));
+  const cur = bestVoice();
+  const good = vs.filter(v => voiceScore(v) >= 50);
+  screen(`<h2>Choose the app's voice</h2>
+    ${good.length ? '' : `<div class="card warn">No Premium or Enhanced voices are installed yet, so these will sound robotic. On the iPad: Settings → Accessibility → Read & Speak (or Spoken Content) → Voices → English → pick one marked Premium (for example Ava, Zoe or Evan) and download it. Then come back here.</div>`}
+    <div class="grid2">${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="-" style="text-align:left${cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
+    <button class="go mt" id="done" style="width:100%" data-say="done">Done</button>`);
+  document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { LS.set('voice', b.dataset.v); const was = LS.get('talk', true); LS.set('talk', true); speak('Next up: squats, thirty pounds.'); LS.set('talk', was); voicePicker(); });
+  on('done', home);
+}
 function watchGate(next) {
   if (setting('Watch Reminder', 'Yes') !== 'Yes') { newSession(); return next(); }
   speak('Start your Apple Watch workout.');
