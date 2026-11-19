@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118205147';   // set automatically on each commit
+const APP_VERSION = '20261118210412';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -249,16 +249,12 @@ function jointState(ex, evs) {
 function whatsNext(opts = {}) {
   const sets = allSets(), evs = allEvents();
   const maxM = setting('Max Sets per Muscle per 24h', 3);
-  // pacing counts from the week start, or from first use of the app if that's later
-  const ws = weekStart(), first = local.firstUse ? new Date(local.firstUse) : new Date();
-  first.setHours(0, 0, 0, 0);
-  const from = first > ws ? first : ws;
-  const daysLeftInWeek = 7 - Math.round((from - ws) / DAY);
-  const daysIn = Math.round((new Date().setHours(0, 0, 0, 0) - from) / DAY) + 1;
+  // The week is always Monday to Sunday. Pace is judged through yesterday: by Wednesday, 2 of 7 days' share is expected.
+  const dayIdx = (new Date().getDay() + 6) % 7;   // Monday = 0
   const exs = exercises();
   const info = exs.map(ex => {
     const done = doneThisWeek(ex.name, sets);
-    const expected = ex.quota * Math.min(1, (daysIn - 1) / daysLeftInWeek);   // judged through yesterday
+    const expected = ex.quota * dayIdx / 7;
     const mload = muscleLoad24(ex.muscle, sets).length;
     const js = jointState(ex, evs);
     return { ex, done, expected, deficit: expected - done, remaining: ex.quota - done, mload, room: maxM - mload, js };
@@ -530,7 +526,6 @@ let SESSION = LS.get('session', null);
 function sessionAlive() { return SESSION && Date.now() - SESSION.lastAt < 45 * 60e3; }
 function newSession() {
   const d = new Date();
-  if (!local.firstUse) { local.firstUse = Date.now(); LS.set('local', local); }
   SESSION = { id: `${dstr(d)}-${pad(d.getHours())}${pad(d.getMinutes())}`, start: Date.now(), lastAt: Date.now(), type: null, lastEx: null, countBy: {}, log: [], skipped: [], prs: [] };
   saveSession();
 }
