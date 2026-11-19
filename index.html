@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119154735';   // set automatically on each commit
+const APP_VERSION = '20261119154804';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -453,6 +453,10 @@ function decide(utt) {
   if (uniq.length > 4) return vlog(heard, 'ignored: sounded like talking');
   // fix common mishearings for command matching
   for (let i = 0; i < toks.length; i++) if (ALIAS[toks[i]]) toks[i] = ALIAS[toks[i]];
+  // "tricep kick back" must not press Back: join split exercise words first
+  for (let i = 0; i < toks.length - 1; i++) if (toks[i] === 'kick' && /^backs?$/.test(toks[i + 1])) toks.splice(i, 2, 'kickback');
+  // a lone "back" only counts when it's the whole phrase (or "go back")
+  if (toks.includes('back') && toks.length > 1 && !(toks.length === 2 && toks[0] === 'go')) toks.splice(toks.indexOf('back'), 1);
   { const pa = PHRASE_ALIAS[toks.join(' ')]; if (pa) toks.splice(0, toks.length, ...pa.split(' ')); }
   uniq.splice(0, uniq.length, ...new Set(toks));
   const h = V.handlers || {}, phrase = toks.join(' ');
