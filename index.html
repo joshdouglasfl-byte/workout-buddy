@@ -53,7 +53,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118195416';   // set automatically on each commit
+const APP_VERSION = '20261118195430';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1078,7 +1078,7 @@ async function checkUpdate() {
     if (!(sessionAlive() && SESSION.log.length) && !NOTE && /Good (morning|afternoon|evening)|Connect|Loading/.test($app.textContent)) applyUpdate();
   } catch {}
 }
-function applyUpdate() { if (UPDATE_READY) location.replace(location.pathname + '?v=' + UPDATE_READY); }
+function applyUpdate() { if (UPDATE_READY) location.replace(location.pathname + '?v=' + UPDATE_READY + location.hash); }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 setTimeout(checkUpdate, 1500);
 
