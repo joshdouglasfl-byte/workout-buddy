@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119144808';   // set automatically on each commit
+const APP_VERSION = '20261119145500';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -368,15 +368,20 @@ function voiceStart(why) {
 }
 // if the mic quietly dropped, bring it back
 const talking = () => V.speaking || ('speechSynthesis' in window && speechSynthesis.speaking);
-setInterval(() => { if (V.want && !V.on && !V.paused && !talking()) voiceStart('watchdog'); }, 4000);
+setInterval(() => { if (V.want && !V.on && !V.paused && !V.restarting && !talking()) voiceStart('watchdog'); }, 4000);
 // While the beat and callouts play during a set, the iPad can't listen reliably, so the mic pauses and comes back after
 function micPause() { if (V.paused) return; V.paused = true; try { V.rec && V.rec.abort(); } catch {} V.on = false; const el = document.getElementById('mic'); if (el) { el.className = 'pill'; el.textContent = '🎙 pacing…'; } }
 // The iPad can leave the mic deaf while the sound engine is active, so put the sound engine to sleep before listening again
 function micResume(why) {
   if (!V.paused) return; V.paused = false; V.quickStops = 0;
   const st = actx ? actx.state : 'none';
+  const tts = 'speechSynthesis' in window ? (speechSynthesis.speaking ? 'speaking' : speechSynthesis.pending ? 'pending' : 'idle') : 'none';
   try { if (actx && actx.state === 'running') actx.suspend(); } catch {}
-  if (V.want) setTimeout(() => { vlog('', `mic back after pacing (sound engine was ${st})`); voiceStart(why || 'after pacing'); }, 450); else micUI();
+  try { if (tts !== 'idle' && tts !== 'none') speechSynthesis.cancel(); } catch {}   // a stuck speech engine also holds the mic
+  clearTimeout(V.coT); V.speaking = false;
+  vlog('', `pacing done: callouts spoken ${V.coSpoken || 0} of ${V.coAsked || 0}, speech ${tts}, sound engine ${st}`);
+  V.coSpoken = 0; V.coAsked = 0;
+  if (V.want) setTimeout(() => voiceStart(why || 'after pacing'), 700); else micUI();
 }
 function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
 function micUI() {
@@ -514,7 +519,11 @@ function speak(text) {
 function callout(word) {
   if (!('speechSynthesis' in window) || !LS.get('talk', true)) return;
   try {
+    // the iPad's speech engine can get stuck; clear anything queued so a stale callout never blocks this one
+    if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+    V.coAsked = (V.coAsked || 0) + 1;
     const u = new SpeechSynthesisUtterance(word); u.rate = 1.15; u.volume = 1;
+    u.onstart = () => { V.coSpoken = (V.coSpoken || 0) + 1; };
     const bv = bestVoice(); if (bv) { u.voice = bv; u.lang = bv.lang; }
     V.speaking = true; V.ttsWords = new Set(['up', 'down', 'done', 'dun', 'don', 'town', 'op'].concat(word.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/)));
     V.calloutUntil = Date.now() + 2500;               // "down" can sound like "done": ignore done just after a callout
@@ -524,7 +533,13 @@ function callout(word) {
   } catch {}
 }
 let actx = null;
-function unlockAudio() { try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {} }
+function unlockAudio() {
+  try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {}
+  // iPadOS only lets the page talk after speech has been started from a tap once: do it silently on the first tap
+  try { if (!V.ttsUnlocked && 'speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); V.ttsUnlocked = true; } } catch {}
+}
+document.addEventListener('touchend', unlockAudio, { passive: true });
+document.addEventListener('click', unlockAudio, true);
 function audioOn() { try { if (actx && actx.state !== 'running') actx.resume(); } catch {} }
 function beep(f = 880, ms = 160) { try { audioOn(); const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); micCheckSoon(); } catch {} }
 // Metronome tick: low tone when the down move starts, high tone for up. Quiet and short so it doesn't fight the mic.
