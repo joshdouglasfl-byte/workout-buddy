@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118205021';   // set automatically on each commit
+const APP_VERSION = '20261118205147';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -852,24 +852,24 @@ function exerciseDetail(name) {
   // group this week's sets by day, sides together
   const byDay = {};
   thisWeek.forEach(s => { const k = dstr(s.t); (byDay[k] = byDay[k] || []).push(s); });
-  const weekHtml = thisWeek.length ? Object.keys(byDay).map(k => `<div style="margin-bottom:10px"><b>${fmtD(parseDate(k))}</b>${byDay[k].map(s => `<div class="exrow"><span class="n">${s.side !== 'Both' ? s.side + ' side' : 'Set ' + (s.set || '')}</span><span style="flex:1">${wt(s)}${s.reps} reps</span><span class="dim" style="flex:0 0 260px">${s.dur ? s.dur + 's · ' : ''}${s.rir ? s.rir + ' left' : ''}${s.off ? ' · felt off' : ''}</span></div>`).join('')}</div>`).join('') : '<p class="dim">No sets yet this week.</p>';
+  const weekHtml = thisWeek.length ? Object.keys(byDay).map(k => `<div style="margin-bottom:10px"><b>${fmtD(parseDate(k))}</b>${byDay[k].map(s => `<div class="exrow"><span style="flex:0 0 70px">${s.side !== 'Both' ? s.side : 'Set ' + (s.set || '')}</span><span style="flex:1;white-space:nowrap">${wt(s)}${s.reps}</span><span class="dim" style="flex:0 0 auto;white-space:nowrap;font-size:18px">${s.dur ? s.dur + 's · ' : ''}${s.rir ? s.rir + ' left' : ''}${s.off ? ' · felt off' : ''}</span></div>`).join('')}</div>`).join('') : '<p class="dim">No sets yet this week.</p>';
   // previous weeks: count, top weight, best set, total reps
   const weeks = {};
   sets.filter(s => s.t < ws).forEach(s => { const k = dstr(weekStart(s.t)); (weeks[k] = weeks[k] || []).push(s); });
   const keys = Object.keys(weeks).sort().reverse();
-  const histHtml = keys.length ? `<div class="exrow dim" style="font-size:17px"><span style="flex:0 0 120px">Week of</span><span style="flex:0 0 50px">Sets</span><span style="flex:0 0 80px">Top</span><span style="flex:1">Best set</span><span style="flex:0 0 70px;text-align:right">Reps</span></div>` + keys.slice(0, 26).map(k => {
+  const histHtml = keys.length ? `<div class="exrow dim" style="font-size:16px"><span style="flex:0 0 120px">Week of</span><span style="flex:0 0 50px">Sets</span><span style="flex:0 0 80px">Top</span><span style="flex:1">Best set</span><span style="flex:0 0 70px;text-align:right">Reps</span></div>` + keys.slice(0, 26).map(k => {
     const g = weeks[k], cnt = g.filter(counts).length;
     const top = g.filter(s => s.weight != null).reduce((m, s) => Math.max(m, s.weight), 0);
     const best = g.slice().sort((a, b) => ((b.weight || 0) - (a.weight || 0)) || (b.reps - a.reps))[0];
     const est = g.some(s => s.est) ? ' <span class="dim">(est.)</span>' : '';
-    return `<div class="exrow"><span style="flex:0 0 120px">${parseDate(k).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}${est}</span><span style="flex:0 0 50px">${cnt}</span><span style="flex:0 0 80px">${top ? +top.toFixed(1) : '—'}</span><span style="flex:1">${wt(best)}${best.reps}</span><span style="flex:0 0 70px;text-align:right">${g.reduce((a, s) => a + s.reps, 0)}</span></div>`;
+    return `<div class="exrow"><span style="flex:0 0 120px">${parseDate(k).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}${est}</span><span style="flex:0 0 50px">${cnt}</span><span style="flex:0 0 80px">${top ? +top.toFixed(1) : '—'}</span><span style="flex:1;white-space:nowrap">${wt(best)}${best.reps}</span><span style="flex:0 0 70px;text-align:right">${g.reduce((a, s) => a + s.reps, 0)}</span></div>`;
   }).join('') : '<p class="dim">No earlier sets.</p>';
   const last = sets[sets.length - 1];
   screen(`<div class="card" style="position:relative"><button class="topback" id="back2" data-say="back">‹ Back</button><h3>${esc(ex.muscle)} · ${esc(ex.type)}${ex.oneSide ? ' · one side at a time' : ''}</h3><h1>${esc(name)}</h1>
       <div class="row" style="align-items:flex-end"><div><div class="big">${fmtW(w.w)}</div><div class="dim">next set · ${esc(w.why)}</div></div>
       <div><div class="big">${done}/${ex.quota}</div><div class="dim">sets this week</div></div>
       <div><div class="big" style="font-size:44px">${last ? fmtD(last.t) : '—'}</div><div class="dim">last done</div></div></div></div>
-    <div class="cols"><div class="card"><h3>This week</h3><div style="max-height:330px;overflow:auto">${weekHtml}</div><button class="go mt sm" id="go" data-say="start" style="width:100%">Start ${esc(name)}</button></div>
+    <div class="cols" style="grid-template-columns:1fr 1.25fr"><div class="card"><h3>This week</h3><div style="max-height:330px;overflow:auto">${weekHtml}</div><button class="go mt sm" id="go" data-say="start" style="width:100%">Start ${esc(name)}</button></div>
     <div class="card"><h3>Previous weeks</h3><div style="max-height:430px;overflow:auto;-webkit-overflow-scrolling:touch">${histHtml}</div></div></div>`);
   on('go', () => { if (!sessionAlive()) watchGate(() => prep(name)); else prep(name); });
   on('back', weekView); on('back2', weekView);
