@@ -16,12 +16,12 @@ body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-i
 #top .sp{flex:1}
 .pill{padding:6px 14px;border-radius:99px;background:var(--card);color:var(--dim)}
 .pill.on{background:#16391f;color:var(--ok)} .pill.warn{background:#3d2f10;color:var(--warn)} .pill.bad{background:#3d1514;color:var(--bad)}
-#app{padding:4px 22px 22px}
-h1{font-size:52px;margin:6px 0 4px;line-height:1.05} h2{font-size:30px;margin:4px 0 12px} h3{font-size:22px;margin:0 0 6px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+#app{padding:2px 20px 14px}
+h1{font-size:48px;margin:4px 0 4px;line-height:1.05} h2{font-size:30px;margin:4px 0 12px} h3{font-size:22px;margin:0 0 6px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
 .big{font-size:84px;font-weight:800;line-height:1}
-.huge{font-size:150px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.huge{font-size:130px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
 .dim{color:var(--dim)} .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
-.card{background:var(--card);border-radius:var(--r);padding:20px 24px;margin-bottom:16px}
+.card{background:var(--card);border-radius:var(--r);padding:16px 22px;margin-bottom:14px}
 .row{display:flex;gap:16px;flex-wrap:wrap} .row>*{flex:1}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 button{font:inherit;font-weight:700;font-size:30px;border:0;border-radius:var(--r);padding:28px 20px;background:var(--card2);color:var(--fg);min-height:96px;touch-action:manipulation}
@@ -32,7 +32,7 @@ button.sel{outline:4px solid var(--acc)}
 .setup{font-size:26px} .cue{font-size:22px;color:var(--dim);margin-top:8px}
 .change{background:#3d2f10;color:var(--warn);border-radius:14px;padding:10px 16px;margin-top:12px;font-weight:700}
 .bar{height:16px;background:var(--card2);border-radius:99px;overflow:hidden} .bar>i{display:block;height:100%;background:var(--acc)}
-.exrow{display:flex;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid #2a2e38;font-size:20px} .exrow .n{flex:0 0 260px} .exrow .bar{flex:1} .exrow .c{flex:0 0 80px;text-align:right}
+.exrow{display:flex;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid #2a2e38;font-size:20px} .exrow .n{flex:0 0 230px} .exrow .bar{flex:1} .exrow .c{flex:0 0 80px;text-align:right}
 #tempo{position:relative;height:300px;width:110px;background:var(--card2);border-radius:20px;overflow:hidden;margin:0 auto}
 #tempo i{position:absolute;left:0;right:0;bottom:0;background:var(--acc);border-radius:20px}
 #tempoLbl{text-align:center;font-size:24px;font-weight:800;margin-top:10px;letter-spacing:.08em}
@@ -43,6 +43,12 @@ input{font:inherit;font-size:22px;width:100%;padding:16px;border-radius:14px;bor
 .say{text-decoration:underline;text-decoration-thickness:4px;text-underline-offset:6px;text-decoration-color:var(--warn)}
 button .say{color:inherit}
 .topback{position:absolute;top:14px;right:16px;font-size:22px;min-height:56px;padding:10px 20px;border-radius:16px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.side{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:stretch}
+.side .stack{display:flex;flex-direction:column;gap:14px}
+.side .stack button{flex:0 0 auto}
+.exrow{padding:7px 0}
 .center{text-align:center}
 .mt{margin-top:16px}
 </style>
@@ -54,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118204640';   // set automatically on each commit
+const APP_VERSION = '20261118204854';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -589,17 +595,17 @@ function home() {
   const streakText = 'workout streak';
   const streakSub = st.n ? (st.daysLeft === 0 ? '<span class="warn">Work out today to keep it alive</span>' : `Keep it alive: next workout by <strong style="color:var(--fg)">${byDay}</strong>`) : (st.broken ? 'Start a new streak today' : 'Start your streak today');
   screen(`<style>
-      .hero{background:linear-gradient(135deg,#1d3b2a,#14324f);border-radius:28px;padding:26px 30px;display:flex;align-items:center;gap:30px;margin-bottom:18px}
+      .hero{background:linear-gradient(135deg,#1d3b2a,#14324f);border-radius:28px;padding:16px 26px;display:flex;align-items:center;gap:30px;margin-bottom:18px}
       .ring{transition:stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1)}
-      .getgo{width:100%;font-size:52px;min-height:170px;border-radius:30px;background:linear-gradient(135deg,#3ddc84,#1fb6ff);color:#04210f;box-shadow:0 10px 40px rgba(61,220,132,.35);animation:pulse 2.4s ease-in-out infinite}
+      .getgo{width:100%;font-size:52px;min-height:140px;border-radius:30px;background:linear-gradient(135deg,#3ddc84,#1fb6ff);color:#04210f;box-shadow:0 10px 40px rgba(61,220,132,.35);animation:pulse 2.4s ease-in-out infinite}
       @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.015)}}
-      .tiles{display:grid;grid-template-columns:1fr 1fr 220px;gap:16px;margin:18px 0}
+      .tiles{display:grid;grid-template-columns:1fr 1fr 200px;gap:16px;margin:14px 0 0}
       .tile{background:var(--card);border-radius:22px;padding:18px 20px}
       .tile b{display:block;font-size:40px;line-height:1.1}
       .tile span{color:var(--dim);font-size:18px}
     </style>
     <div class="hero" id="heroWk" style="cursor:pointer">
-      <svg width="210" height="210" viewBox="0 0 210 210" style="flex:0 0 210px">
+      <svg width="190" height="190" viewBox="0 0 210 210" style="flex:0 0 190px">
         <circle cx="105" cy="105" r="${R}" stroke="rgba(255,255,255,.12)" stroke-width="18" fill="none"/>
         <circle id="ring" class="ring" cx="105" cy="105" r="${R}" stroke="${pct >= 100 ? '#ffd166' : '#3ddc84'}" stroke-width="18" fill="none" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C}" transform="rotate(-90 105 105)"/>
         <text x="105" y="102" text-anchor="middle" fill="#fff" font-size="46" font-weight="800">${pct}%</text>
@@ -614,7 +620,7 @@ function home() {
     <div class="tiles">
       <div class="tile" id="stTile" style="cursor:pointer"><b>🔥 ${st.n} <span style="font-size:22px;font-weight:600">${streakText}</span></b><span>${streakSub}${st.last ? '<br>Last workout ' + (st.sinceLast === 0 ? 'today' : st.sinceLast === 1 ? 'yesterday' : st.sinceLast + ' days ago') : ''}</span></div>
       <div class="tile" id="prTile" style="cursor:pointer"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}<br>Tap to see them ›</span></div>
-      <div class="tile" id="bodyTile" style="cursor:pointer;padding:8px 10px;text-align:center">${bodySvg(bodyStatus(allEvents()), 190, false)}<span>Tap to update</span></div>
+      <div class="tile" id="bodyTile" style="cursor:pointer;padding:8px 10px;text-align:center">${bodySvg(bodyStatus(allEvents()), 170, false)}<span>Tap to update</span></div>
     </div>
     <div class="heard center"></div>`,
     { ready: go, next: go, yes: go });
@@ -641,12 +647,12 @@ function streaksView() {
   const best = chains.reduce((m, c) => c.n > m.n ? c : m, { n: 0 });
   const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const past = chains.slice().sort((a, b) => b.n - a.n || b.end - a.end).slice(0, 10);
-  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>🔥 Workout streaks</h2></div>
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>🔥 Workout streaks</h2></div><div class="cols"><div>
     <div class="card"><h3>How it works</h3><p style="font-size:24px;margin:0">Every workout day adds one to your streak, as long as you never go more than <b>${gap} days</b> between workouts. Rest days are fine; they just can't stretch past ${gap} days. Miss that window and the streak starts over at your next workout.</p></div>
-    <div class="row"><div class="card center"><div class="big">${st.n}</div><div class="dim">current streak</div></div><div class="card center"><div class="big">${best.n}</div><div class="dim">best ever${best.n ? '<br>' + fmt(best.start) + ' – ' + fmt(best.end) : ''}</div></div><div class="card center"><div class="big">${chains.length}</div><div class="dim">streaks started</div></div></div>
+    <div class="row"><div class="card center"><div class="big">${st.n}</div><div class="dim">current streak</div></div><div class="card center"><div class="big">${best.n}</div><div class="dim">best ever${best.n ? '<br>' + fmt(best.start) + ' – ' + fmt(best.end) : ''}</div></div><div class="card center"><div class="big">${chains.length}</div><div class="dim">streaks started</div></div></div></div><div>
     <div class="card"><h3>Longest streaks</h3>${past.map(c => `<div class="exrow"><span class="n">🔥 ${c.n} workout${c.n === 1 ? '' : 's'}</span><span style="flex:1">${fmt(c.start)}${c.n > 1 ? ' – ' + fmt(c.end) : ''}</span>${c === chains[chains.length - 1] && st.n ? '<span class="ok">current</span>' : ''}</div>`).join('') || '<p class="dim">No workouts yet.</p>'}
       <p class="dim" style="font-size:17px">Based on dated workouts; the 13 notebook sessions with estimated dates aren't counted.</p></div>
-    <button id="back" style="width:100%" data-say="back">Back</button>`);
+    </div></div>`);
   on('back', home); on('back2', home);
 }
 
@@ -680,10 +686,10 @@ function bodyView(selected) {
   const sel = selected && REGIONS.find(r => r.id === selected);
   const notGood = REGIONS.filter(r => bs[r.label].status !== 'good');
   const since = t => t ? t.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
-  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>How’s your body?</h2></div>
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>How’s your body?</h2></div>
     <p class="dim">Tap an area to set it. 🟢 Good · 🟡 Sore: lighter first set · 🔴 Hurt: ask before exercises that use it</p>
     <div class="row" style="align-items:flex-start">
-      <div style="flex:3">${bodySvg(bs, 560, true, selected)}</div>
+      <div style="flex:3">${bodySvg(bs, 520, true, selected)}</div>
       <div style="flex:2">
         ${sel ? `<div class="card"><h3>${esc(sel.label)}</h3><div class="dim" style="margin-bottom:12px">Now: ${bs[sel.label].status}${bs[sel.label].t ? ' since ' + since(bs[sel.label].t) : ''}</div>
           <div class="chips" style="flex-direction:column">
@@ -692,11 +698,11 @@ function bodyView(selected) {
             <button data-st="hurt" style="background:#3d1514;color:#ff8a87">🔴 Hurt</button></div></div>`
           : `<div class="card"><h3>Not 100%</h3>${notGood.length ? notGood.map(r => `<div class="exrow" data-pick="${r.id}" style="cursor:pointer"><span style="flex:1">${bs[r.label].status === 'hurt' ? '🔴' : '🟡'} ${esc(r.label)}</span><span class="dim">since ${since(bs[r.label].t)}</span></div>`).join('') : '<p class="dim">Everything’s green. 💪</p>'}</div>`}
       </div></div>
-    <button id="back" class="mt" style="width:100%">Back</button>`);
+    `);
   document.querySelectorAll('[data-r]').forEach(el => el.addEventListener('click', () => bodyView(el.getAttribute('data-r'))));
   document.querySelectorAll('[data-pick]').forEach(el => el.onclick = () => bodyView(el.dataset.pick));
   document.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { setBody(sel.label, b.dataset.st, 'body map'); toast(`${sel.label}: ${b.dataset.st}`); bodyView(); });
-  on('back', home); on('back2', home);
+  on('back2', home);
 }
 // Every 48 hours, ask about areas that aren't green (they never clear on their own)
 function bodyCheckDue() {
@@ -727,17 +733,16 @@ function recordsView() {
     return { name: e.name, top, reps: atTop.reps, when: atTop.t };
   }).filter(Boolean);
   const fmtD = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>🏆 Personal records</h2></div>
-    <div class="card"><h3>Records set in the app</h3>${prs.length ? prs.map(r => `<div class="exrow"><span class="n">${esc(r['Name'])}</span><span style="flex:1">${esc(r['Detail'])}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(parseDate(r['Date']))}</span></div>`).join('') : '<p class="dim">None yet. Beat your heaviest weight, or your most reps at a weight, to earn one.</p>'}</div>
-    <div class="card"><h3>All-time heaviest, from your full history</h3>${bests.map(b => `<div class="exrow"><span class="n">${esc(b.name)}</span><span style="flex:1">${+b.top.toFixed(1)} lb × ${b.reps}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(b.when)}</span></div>`).join('')}</div>
-    <button id="back" style="width:100%" data-say="back">Back</button>`);
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>🏆 Personal records</h2></div>
+    <div class="cols"><div class="card"><h3>Records set in the app</h3>${prs.length ? prs.map(r => `<div class="exrow"><span class="n">${esc(r['Name'])}</span><span style="flex:1">${esc(r['Detail'])}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(parseDate(r['Date']))}</span></div>`).join('') : '<p class="dim">None yet. Beat your heaviest weight, or your most reps at a weight, to earn one.</p>'}</div>
+    <div class="card"><h3>All-time heaviest, from your full history</h3>${bests.map(b => `<div class="exrow"><span class="n">${esc(b.name)}</span><span style="flex:1">${+b.top.toFixed(1)} lb × ${b.reps}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(b.when)}</span></div>`).join('')}</div></div>`);
   on('back', home); on('back2', home);
 }
 
 // ---------- settings (gear) ----------
 function settingsView() {
   if (alive0()) return toast('Settings are available between sessions');
-  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>⚙️ Settings</h2></div>
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>⚙️ Settings</h2></div>
     <div class="grid2">
       <button id="ex" style="text-align:left">🏋️ Exercises<br><span class="dim" style="font-size:18px">See, start, turn on or off, request new</span></button>
       <button id="body" style="text-align:left">🧍 Body map<br><span class="dim" style="font-size:18px">Mark areas good, sore or hurt</span></button>
@@ -802,7 +807,7 @@ let EX_BACK = null;
 function pickExercise(back) {
   if (typeof back === 'function') EX_BACK = back; else if (back !== 'keep') EX_BACK = null;
   const n = whatsNext();
-  screen(`<h2>Exercises <span class="dim" style="font-size:22px">(active · tap one to start it)</span></h2><div class="grid2">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" data-say="${NAME_SAY[i.ex.name] || ''}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div>
+  screen(`<h2>Exercises <span class="dim" style="font-size:22px">(active · tap one to start it)</span></h2><div class="grid3">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" data-say="${NAME_SAY[i.ex.name] || ''}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div>
     <div class="row mt"><button class="sm" id="edit" data-say="edit">Edit list</button><button class="sm" id="req" data-say="request">Request exercise</button><button class="sm" id="back">Back</button></div>`);
   document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { const x = b.dataset.x; if (!sessionAlive()) watchGate(() => prep(x)); else prep(x); });
   on('edit', editExercises);
@@ -813,9 +818,9 @@ function pickExercise(back) {
 // Turn exercises on or off for "what's next" and the weekly quota. Saved to the Exercises tab (Active column).
 function editExercises() {
   const all = ((S && S.exercises) || []).slice().sort((a, b) => (num(a['Order']) ?? 99) - (num(b['Order']) ?? 99));
-  screen(`<h2>Edit exercise list</h2><p class="dim">Tap to turn an exercise on or off. Off exercises aren't suggested and don't count toward the weekly quota.</p>
+  screen(`<h2>Edit exercise list <span class="dim" style="font-size:20px">Tap to turn on or off. Off exercises aren't suggested and don't count toward the quota.</span></h2>
     ${[['Active', all.filter(e => e['Active'] === 'Yes')], ['Disabled', all.filter(e => e['Active'] !== 'Yes')]].map(([label, list]) => `<h3 class="mt">${label} (${list.length})</h3>
-    <div class="grid2">${list.map(e => { const onx = e['Active'] === 'Yes'; return `<button class="sm" data-t="${esc(e['Exercise'])}" data-say="-" style="text-align:left;${onx ? '' : 'opacity:.55'}">${onx ? '✅' : '⬜️'} ${esc(e['Exercise'])}<br><span class="dim" style="font-size:18px">${esc(e['Day Type'])} · ${esc(e['Primary Muscle'])}${onx ? '' : ' · off'}</span></button>`; }).join('') || '<p class="dim">None</p>'}</div>`).join('')}
+    <div class="grid3">${list.map(e => { const onx = e['Active'] === 'Yes'; return `<button class="sm" data-t="${esc(e['Exercise'])}" data-say="-" style="text-align:left;${onx ? '' : 'opacity:.55'}">${onx ? '✅' : '⬜️'} ${esc(e['Exercise'])}<br><span class="dim" style="font-size:18px">${esc(e['Day Type'])} · ${esc(e['Primary Muscle'])}${onx ? '' : ' · off'}</span></button>`; }).join('') || '<p class="dim">None</p>'}</div>`).join('')}
     <div class="row mt"><button class="sm" id="req" data-say="request">Request exercise</button><button class="go" id="done" data-say="done">Done</button></div>`);
   document.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
     const name = b.dataset.t, row = S.exercises.find(e => e['Exercise'] === name);
@@ -830,7 +835,7 @@ function editExercises() {
 
 function weekView() {
   const n = whatsNext();
-  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>This week · <span class="${n.pace.cls}">${n.pace.text}</span></h2></div><p class="dim">Tap an exercise for its details and history.</p><div class="card">${n.info.map(i => `<div class="exrow" data-x="${esc(i.ex.name)}" style="cursor:pointer"><span class="n">${esc(i.ex.name)} ›</span><div class="bar"><i style="width:${Math.min(100, 100 * i.done / i.ex.quota)}%;background:${i.done >= i.ex.quota ? 'var(--ok)' : i.deficit > 1.5 ? 'var(--warn)' : 'var(--acc)'}"></i></div><span class="c">${i.done}/${i.ex.quota}</span></div>`).join('')}</div><button id="back" style="width:100%">Back</button>`);
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>This week · <span class="${n.pace.cls}">${n.pace.text}</span></h2></div><p class="dim" style="margin:0 0 10px">Tap an exercise for its details and history.</p><div class="card cols" style="column-gap:40px;row-gap:0">${n.info.map(i => `<div class="exrow" data-x="${esc(i.ex.name)}" style="cursor:pointer"><span class="n">${esc(i.ex.name)} ›</span><div class="bar"><i style="width:${Math.min(100, 100 * i.done / i.ex.quota)}%;background:${i.done >= i.ex.quota ? 'var(--ok)' : i.deficit > 1.5 ? 'var(--warn)' : 'var(--acc)'}"></i></div><span class="c">${i.done}/${i.ex.quota}</span></div>`).join('')}</div>`);
   document.querySelectorAll('.exrow[data-x]').forEach(r => r.onclick = () => exerciseDetail(r.dataset.x));
   on('back', home); on('back2', home);
 }
@@ -860,13 +865,12 @@ function exerciseDetail(name) {
     return `<div class="exrow"><span class="n">${parseDate(k).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}${est}</span><span style="flex:0 0 90px">${cnt}</span><span style="flex:0 0 140px">${top ? +top.toFixed(1) + ' lb' : '—'}</span><span style="flex:1">${wt(best)}${best.reps}</span><span style="flex:0 0 110px;text-align:right">${g.reduce((a, s) => a + s.reps, 0)}</span></div>`;
   }).join('') : '<p class="dim">No earlier sets.</p>';
   const last = sets[sets.length - 1];
-  screen(`<div class="card" style="position:relative"><button class="topback" id="back2" data-say="-">‹ Back</button><h3>${esc(ex.muscle)} · ${esc(ex.type)}${ex.oneSide ? ' · one side at a time' : ''}</h3><h1>${esc(name)}</h1>
+  screen(`<div class="card" style="position:relative"><button class="topback" id="back2" data-say="back">‹ Back</button><h3>${esc(ex.muscle)} · ${esc(ex.type)}${ex.oneSide ? ' · one side at a time' : ''}</h3><h1>${esc(name)}</h1>
       <div class="row" style="align-items:flex-end"><div><div class="big">${fmtW(w.w)}</div><div class="dim">next set · ${esc(w.why)}</div></div>
       <div><div class="big">${done}/${ex.quota}</div><div class="dim">sets this week</div></div>
       <div><div class="big" style="font-size:44px">${last ? fmtD(last.t) : '—'}</div><div class="dim">last done</div></div></div></div>
-    <div class="card"><h3>This week</h3>${weekHtml}</div>
-    <div class="card"><h3>Previous weeks</h3>${histHtml}</div>
-    <div class="row"><button class="go" id="go" data-say="start">Start ${esc(name)}</button><button id="back" data-say="back">Back</button></div>`);
+    <div class="cols"><div class="card"><h3>This week</h3>${weekHtml}<button class="go mt sm" id="go" data-say="start" style="width:100%">Start ${esc(name)}</button></div>
+    <div class="card"><h3>Previous weeks</h3>${histHtml}</div></div>`);
   on('go', () => { if (!sessionAlive()) watchGate(() => prep(name)); else prep(name); });
   on('back', weekView); on('back2', weekView);
 }
@@ -903,14 +907,14 @@ function prep(name, opts = {}) {
   const plan = planFor(name);
   const note = plan && plan['Trainer Note'];
   speak(`${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''}`);
-  screen(`<div class="card"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3><h1>${esc(name)}</h1>
+  screen(`<div class="side"><div class="card" style="margin:0"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3><h1>${esc(name)}</h1>
      <div class="big">${fmtW(w.w)}</div><div class="dim">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
      ${changes.length ? `<div class="change">${changes.map(esc).join(' · ')}</div>` : ''}
      <div class="setup mt">${esc(ex.setup)}</div><div class="cue">${esc(ex.cue)}</div>
      ${note ? `<div class="cue">Trainer: ${esc(note)}</div>` : ''}
      <div class="dim mt">${ex.repMin}–${ex.repMax} reps · about ${ex.target}s · tempo ${esc(ex.tempo)}, ${+repPlan(ex).total.toFixed(1)}s per rep with pauses</div></div>
-     <button class="go" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button>
-     <div class="row mt"><button class="sm" id="skip">Skip</button><button class="sm" id="other" data-say="different">Different exercise</button><button class="sm stop" id="end">End session</button></div>
+     <div class="stack"><button class="go" id="go" style="flex:1 1 auto;font-size:56px;min-height:260px">GO</button>
+       <button class="sm" id="skip">Skip</button><button class="sm" id="other" data-say="different">Different exercise</button><button class="sm stop" id="end">End session</button></div></div>
      <div class="heard center"></div>`,
     { ready: () => startSet(), skip: () => skipFlow(name), end: endFlow });
   on('go', () => startSet()); on('skip', () => skipFlow(name)); on('other', pickExercise); on('end', endFlow);
