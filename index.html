@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119144041';   // set automatically on each commit
+const APP_VERSION = '20261119144233';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -313,6 +313,11 @@ function voiceStart(why) {
   try { V.rec && V.rec.abort(); } catch {}
   const r = new SR(); V.rec = r;
   r.lang = 'en-US'; r.continuous = true; r.interimResults = true;
+  if (document.getElementById('clock')) {
+    let a = false, snd = false;
+    r.onaudiostart = () => { if (!a) { a = true; vlog('', 'set screen: mic audio flowing'); } };
+    r.onsoundstart = () => { if (!snd) { snd = true; vlog('', 'set screen: sound detected'); } };
+  }
   r.onstart = () => { V.on = true; V.needTap = false; V.prev = []; V.startedAt = Date.now(); micUI(); if (!V.quickStops) vlog('', 'mic on' + (why ? ' (' + why + ')' : '')); };
   r.onresult = e => {
     let text = '';
@@ -365,7 +370,13 @@ function voiceStart(why) {
 setInterval(() => { if (V.want && !V.on && !V.paused) voiceStart('watchdog'); }, 4000);
 // While the beat and callouts play during a set, the iPad can't listen reliably, so the mic pauses and comes back after
 function micPause() { if (V.paused) return; V.paused = true; try { V.rec && V.rec.abort(); } catch {} V.on = false; const el = document.getElementById('mic'); if (el) { el.className = 'pill'; el.textContent = '🎙 pacing…'; } }
-function micResume(why) { if (!V.paused) return; V.paused = false; V.quickStops = 0; if (V.want) setTimeout(() => voiceStart(why || 'after pacing'), 250); else micUI(); }
+// The iPad can leave the mic deaf while the sound engine is active, so put the sound engine to sleep before listening again
+function micResume(why) {
+  if (!V.paused) return; V.paused = false; V.quickStops = 0;
+  const st = actx ? actx.state : 'none';
+  try { if (actx && actx.state === 'running') actx.suspend(); } catch {}
+  if (V.want) setTimeout(() => { vlog('', `mic back after pacing (sound engine was ${st})`); voiceStart(why || 'after pacing'); }, 450); else micUI();
+}
 function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
 function micUI() {
   const el = document.getElementById('mic');
@@ -508,9 +519,10 @@ function callout(word) {
 }
 let actx = null;
 function unlockAudio() { try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {} }
-function beep(f = 880, ms = 160) { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); micCheckSoon(); } catch {} }
+function audioOn() { try { if (actx && actx.state !== 'running') actx.resume(); } catch {} }
+function beep(f = 880, ms = 160) { try { audioOn(); const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); micCheckSoon(); } catch {} }
 // Metronome tick: low tone when the down move starts, high tone for up. Quiet and short so it doesn't fight the mic.
-function tick(up, soft) { try { const o = actx.createOscillator(), g = actx.createGain(); o.type = 'triangle'; o.frequency.value = up ? 1320 : 660; o.connect(g); g.connect(actx.destination); const v = soft ? 0.08 : 0.18; g.gain.setValueAtTime(v, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.07); o.start(); o.stop(actx.currentTime + 0.08); } catch {} }
+function tick(up, soft) { try { audioOn(); const o = actx.createOscillator(), g = actx.createGain(); o.type = 'triangle'; o.frequency.value = up ? 1320 : 660; o.connect(g); g.connect(actx.destination); const v = soft ? 0.08 : 0.18; g.gain.setValueAtTime(v, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.07); o.start(); o.stop(actx.currentTime + 0.08); } catch {} }
 let wake = null;
 async function keepAwake() { try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => wake = null); } } catch {} }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { keepAwake(); if (Date.now() - lastLoad > 5 * 60e3) loadState(true); } });
