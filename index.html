@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118210853';   // set automatically on each commit
+const APP_VERSION = '20261118211113';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -184,6 +184,12 @@ const planFor = n => ((S && S.plan) || []).find(p => p['Exercise'] === n);
 // Week math (week starts Monday)
 function weekStart(d = new Date()) { const x = new Date(d); x.setHours(0, 0, 0, 0); const dow = (x.getDay() + 6) % 7; x.setDate(x.getDate() - dow); return x; }
 const counts = s => s.side !== 'Left' && s.reps != null;   // a right+left pair is one set; planned-only rows don't count
+function isPushSet(s, sets, ex) {
+  if ((s.set || 0) >= 3) return true;
+  const ws = weekStart(s.t), wk = sets.filter(x => x.ex === s.ex && counts(x) && weekStart(x.t).getTime() === ws.getTime()).sort((a, b) => a.t - b.t);
+  const me = counts(s) ? s : wk.find(x => x.session === s.session && x.set === s.set);   // left row → its right partner
+  return !!me && wk.indexOf(me) === ex.quota - 1;
+}
 function doneThisWeek(name, sets) { const ws = weekStart(); return sets.filter(s => s.ex === name && s.t >= ws && counts(s)).length; }
 function muscleLoad24(muscle, sets) { const since = Date.now() - DAY; const names = new Set(exercises().filter(e => e.muscle === muscle).map(e => e.name)); return sets.filter(s => names.has(s.ex) && s.t.getTime() >= since && counts(s)); }
 function step(w) { return w < setting('Small Step Below (lb)', 30) ? setting('Small Weight Step (lb)', 2.5) : setting('Large Weight Step (lb)', 5); }
@@ -206,8 +212,9 @@ function weightFor(ex, sets) {
     return { w, why: `layoff (${Math.round(days)} days)` };
   }
   const sess = mine.filter(s => s.session === last.session && s.weight === last.weight && s.reps != null);
-  const lastSet = sess[sess.length - 1];   // sets 1-2 are pacing sets; the last set is the all-out one
-  const allTop = sess.length >= 2 && lastSet.reps >= ex.repMax && !sess.some(s => s.off) && sess.every(s => s.reps >= ex.repMin);
+  // pacing sets hold back; only a push set (set 3, or the week's last quota set) tests the weight
+  const lastSet = sess[sess.length - 1];
+  const allTop = lastSet && isPushSet(lastSet, mine, ex) && lastSet.reps >= ex.repMax && !sess.some(s => s.off) && sess.every(s => s.reps >= ex.repMin);
   if (allTop) return { w: last.weight + step(last.weight), why: 'hit top of range' };
   return { w: last.weight, why: 'same as last time' };
 }
@@ -902,9 +909,12 @@ function prep(name, opts = {}) {
   SESSION.type = SESSION.type || ex.type; saveSession();
   const plan = planFor(name);
   const note = plan && plan['Trainer Note'];
-  const pushSet = setNo >= 3; CUR.push = pushSet;
-  speak(`${pushSet ? 'Last set. Push it. ' : ''}${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''}`);
-  screen(`<div class="side"><div class="card" style="margin:0"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3>${pushSet ? '<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:24px;margin:4px 0 8px">🔥 Last set: push it. See how many you can get.</div>' : ''}<h1>${esc(name)}</h1>
+  // push set: set 3 of the sitting, or the set that finishes this week's quota
+  const weekNo = doneThisWeek(name, sets) + 1;
+  const pushSet = setNo >= 3 || weekNo === ex.quota;
+  CUR.push = pushSet; CUR.pushWhy = setNo >= 3 ? 'Last set' : `Set ${weekNo} of ${ex.quota} this week`;
+  speak(`${pushSet ? CUR.pushWhy + '. Push it. ' : ''}${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''}`);
+  screen(`<div class="side"><div class="card" style="margin:0"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3>${pushSet ? '<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:24px;margin:4px 0 8px">🔥 ' + CUR.pushWhy + ': push it. See how many you can get.</div>' : ''}<h1>${esc(name)}</h1>
      <div class="big">${fmtW(w.w)}</div><div class="dim">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
      ${changes.length ? `<div class="change">${changes.map(esc).join(' · ')}</div>` : ''}
      <div class="setup mt">${esc(ex.setup)}</div><div class="cue">${esc(ex.cue)}</div>
@@ -967,7 +977,7 @@ function runSet() {
   if (CUR.push) {
     const prev = allSets().filter(x => x.ex === CUR.name && x.reps != null && x.weight === CUR.weight && x.session !== SESSION.id && (!ex.oneSide || x.side === CUR.side));
     const best = prev.reduce((m, x) => Math.max(m, x.reps), 0);
-    beat = `<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:26px;margin:4px 0">🔥 Last set: push it${best ? ` · beat ${best}` : ''}</div>`;
+    beat = `<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:26px;margin:4px 0">🔥 ${CUR.pushWhy}: push it${best ? ` · beat ${best}` : ''}</div>`;
   }
   screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3>${beat}
       <div class="huge" id="clock">0</div><div class="dim" style="font-size:26px">seconds · target ${ex.target}s</div>
