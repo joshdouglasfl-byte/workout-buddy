@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119143152';   // set automatically on each commit
+const APP_VERSION = '20261119144041';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1045,7 +1045,7 @@ function prep(name, opts = {}) {
     document.getElementById('wv').textContent = fmtW(nw);
     document.getElementById('pbBox').innerHTML = pbHtml(nw);
     document.getElementById('wwhy').textContent = 'your choice this session';
-    clearTimeout(CUR.wLogT); CUR.wLogT = setTimeout(() => event('weight_change', name, '', 'set by Josh', `${fmtW(w.w)} → ${fmtW(nw)} for this session`), 4000);
+    clearTimeout(CUR.wLogT); CUR.wLogT = setTimeout(() => CUR.weight !== w.w && event('weight_change', name, '', 'set by Josh', `${fmtW(w.w)} → ${fmtW(nw)} for this session`), 4000);
   };
   on('wm', () => bump(-1)); on('wp', () => bump(1));
 }
@@ -1233,7 +1233,7 @@ function repsScreen() {
 }
 function effortScreen() {
   let off = false;
-  speak('Reps left in the tank?');
+  speak('How many reps left?');
   screen(`<div class="center"><h2>How many reps did you have left?</h2>
     <div class="chips"><button id="r0">0</button><button id="r2">2</button><button id="r4">4+</button></div>
     <button class="mt sm" id="off" style="width:100%" data-say="off">⚠️ This felt off (pain or odd fatigue)</button><div class="heard"></div></div>`,
