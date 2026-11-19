@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119101317';   // set automatically on each commit
+const APP_VERSION = '20261119102212';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -506,6 +506,8 @@ function callout(word) {
 let actx = null;
 function unlockAudio() { try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {} }
 function beep(f = 880, ms = 160) { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); micCheckSoon(); } catch {} }
+// Metronome tick: low tone when the down move starts, high tone for up. Quiet and short so it doesn't fight the mic.
+function tick(up, soft) { try { const o = actx.createOscillator(), g = actx.createGain(); o.type = 'triangle'; o.frequency.value = up ? 1320 : 660; o.connect(g); g.connect(actx.destination); const v = soft ? 0.08 : 0.18; g.gain.setValueAtTime(v, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.07); o.start(); o.stop(actx.currentTime + 0.08); } catch {} }
 let wake = null;
 async function keepAwake() { try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => wake = null); } } catch {} }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { keepAwake(); if (Date.now() - lastLoad > 5 * 60e3) loadState(true); } });
@@ -1090,9 +1092,17 @@ function runSet(getSet = 0) {
     getSet ? { ready: goEarly } : { done: saidDone });
   on('done', () => CUR.start ? finishSet() : goEarly());
   function saidDone() { if (Date.now() < (V.calloutUntil || 0)) return vlog('done', 'ignored: right after a pace callout'); finishSet(); }
-  // pace callouts like a trainer: reps 1–3 and 7–8, never on a push set, and only when each move is long enough to say
-  const coOn = setting('Voice Pacing', 'On') !== 'Off' && !CUR.push && plan.seq.filter(p => p.kind !== 'HOLD').every(p => p.t >= 0.8);
+  // pace callouts like a trainer (reps 1–3 and 7–8, only when each move is long enough to say) and metronome ticks.
+  // On a push set both stop about halfway through the length of your previous set of this exercise, where fatigue sets in.
+  const coOn = setting('Voice Pacing', 'On') !== 'Off' && plan.seq.filter(p => p.kind !== 'HOLD').every(p => p.t >= 0.8);
+  const tickOn = setting('Metronome', 'On') !== 'Off';
   const coReps = new Set([0, 1, 2, 6, 7]);
+  let paceUntil = Infinity;
+  if (CUR.push) {
+    const mine = allSets().filter(x => x.ex === CUR.name && x.dur && (!ex.oneSide || x.side === CUR.side)).sort((a, b) => b.t - a.t);
+    const prior = mine.find(x => x.session === SESSION.id) || mine[0];
+    paceUntil = 0.5 * ((prior && prior.dur) || ex.target);
+  }
   let beeped = false, lastKind = '', lastCount = getSet, tipB = false;
   function goEarly() {
     if (CUR.start) return;
@@ -1132,7 +1142,10 @@ function runSet(getSet = 0) {
     const lbl = document.getElementById('tempoLbl');
     if (kind !== lastKind) {
       lbl.textContent = kind; lbl.style.color = colors[kind] || 'var(--dim)'; lastKind = kind;
-      if (coOn && t >= 0 && (kind === 'UP' || kind === 'DOWN') && coReps.has(Math.floor(t / P))) callout(kind === 'UP' ? 'Up!' : 'Down!');
+      if ((kind === 'UP' || kind === 'DOWN') && t < paceUntil) {
+        if (coOn && t >= 0 && coReps.has(Math.floor(t / P))) callout(kind === 'UP' ? 'Up!' : 'Down!');
+        else if (tickOn) tick(kind === 'UP', t < 0);       // softer during the get-set preview
+      }
     }
   }, 40);
   function phaseAt(t) {
