@@ -1,0 +1,221 @@
+{
+ "note": "Voice lines. key -> text. Packs live in voice/<pack>/<key>.mp3",
+ "lines": [
+  {
+   "key": "down",
+   "text": "Down!"
+  },
+  {
+   "key": "up",
+   "text": "Up!"
+  },
+  {
+   "key": "push_max",
+   "text": "Push yourself and max this set!"
+  },
+  {
+   "key": "rest_up",
+   "text": "Rest is up."
+  },
+  {
+   "key": "set_1",
+   "text": "Set one."
+  },
+  {
+   "key": "set_2",
+   "text": "Set two of three."
+  },
+  {
+   "key": "set_3",
+   "text": "Set three of three."
+  },
+  {
+   "key": "set_n",
+   "text": "Next set."
+  },
+  {
+   "key": "push_set",
+   "text": "Push set."
+  },
+  {
+   "key": "side_right",
+   "text": "Right side."
+  },
+  {
+   "key": "side_left",
+   "text": "Left side."
+  },
+  {
+   "key": "nice_work",
+   "text": "Nice work!"
+  },
+  {
+   "key": "new_record",
+   "text": "And a new record!"
+  },
+  {
+   "key": "level_up",
+   "text": "Level up!"
+  },
+  {
+   "key": "set_complete",
+   "text": "set complete."
+  },
+  {
+   "key": "sets_complete",
+   "text": "sets complete."
+  },
+  {
+   "key": "n_1",
+   "text": "One"
+  },
+  {
+   "key": "n_2",
+   "text": "Two"
+  },
+  {
+   "key": "n_3",
+   "text": "Three"
+  },
+  {
+   "key": "n_4",
+   "text": "Four"
+  },
+  {
+   "key": "n_5",
+   "text": "Five"
+  },
+  {
+   "key": "n_6",
+   "text": "Six"
+  },
+  {
+   "key": "n_7",
+   "text": "Seven"
+  },
+  {
+   "key": "n_8",
+   "text": "Eight"
+  },
+  {
+   "key": "n_9",
+   "text": "Nine"
+  },
+  {
+   "key": "n_10",
+   "text": "Ten"
+  },
+  {
+   "key": "n_11",
+   "text": "Eleven"
+  },
+  {
+   "key": "n_12",
+   "text": "Twelve"
+  },
+  {
+   "key": "n_13",
+   "text": "Thirteen"
+  },
+  {
+   "key": "n_14",
+   "text": "Fourteen"
+  },
+  {
+   "key": "n_15",
+   "text": "Fifteen"
+  },
+  {
+   "key": "n_16",
+   "text": "Sixteen"
+  },
+  {
+   "key": "n_17",
+   "text": "Seventeen"
+  },
+  {
+   "key": "n_18",
+   "text": "Eighteen"
+  },
+  {
+   "key": "n_19",
+   "text": "Nineteen"
+  },
+  {
+   "key": "n_20",
+   "text": "Twenty"
+  },
+  {
+   "key": "n_21",
+   "text": "Twenty-one"
+  },
+  {
+   "key": "n_22",
+   "text": "Twenty-two"
+  },
+  {
+   "key": "n_23",
+   "text": "Twenty-three"
+  },
+  {
+   "key": "n_24",
+   "text": "Twenty-four"
+  },
+  {
+   "key": "ex_squats",
+   "text": "Squats."
+  },
+  {
+   "key": "ex_single_arm_row",
+   "text": "Single arm row."
+  },
+  {
+   "key": "ex_incline_bench_press",
+   "text": "Incline bench press."
+  },
+  {
+   "key": "ex_lateral_shoulder_raise",
+   "text": "Lateral raises."
+  },
+  {
+   "key": "ex_tricep_kickback",
+   "text": "Tricep kickbacks."
+  },
+  {
+   "key": "ex_sup_dumbbell_curls",
+   "text": "Curls."
+  },
+  {
+   "key": "ex_db_over_press",
+   "text": "Overhead press."
+  },
+  {
+   "key": "ex_leg_raises",
+   "text": "Leg raises."
+  },
+  {
+   "key": "ex_reverse_crunch",
+   "text": "Reverse crunch."
+  },
+  {
+   "key": "ex_plank_hip_dip",
+   "text": "Plank hip dips."
+  },
+  {
+   "key": "ex_mountain_climbers",
+   "text": "Mountain climbers."
+  },
+  {
+   "key": "ex_dead_bug",
+   "text": "Dead bug."
+  },
+  {
+   "key": "ex_heel_tap",
+   "text": "Heel taps."
+  },
+  {
+   "key": "ex_push_ups",
+   "text": "Push-ups."
+  }
+ ]
+}

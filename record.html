@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Workout Buddy · Record your trainer voice</title>
+<style>
+:root{--bg:#0f1115;--card:#1b1e25;--fg:#f2f4f8;--dim:#8b93a1;--acc:#3ddc84;--rec:#e5484d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:18px -apple-system,system-ui,sans-serif}
+main{max-width:900px;margin:0 auto;padding:24px}
+h1{margin:0 0 6px}p{color:var(--dim);margin:4px 0 14px}
+.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;position:sticky;top:0;background:var(--bg);padding:12px 0;z-index:2}
+button{font:inherit;border:0;border-radius:12px;padding:10px 18px;background:var(--card);color:var(--fg);cursor:pointer}
+button.go{background:var(--acc);color:#04210f;font-weight:700}
+.big{background:var(--card);border-radius:22px;padding:28px;margin:10px 0 18px;text-align:center}
+.big .t{font-size:56px;font-weight:800;margin:8px 0}
+.big .k{color:var(--dim);font-size:16px}
+.recbtn{font-size:30px;padding:18px 40px;border-radius:18px;background:var(--rec);color:#fff;font-weight:800}
+.recbtn.on{animation:p 1s infinite}@keyframes p{50%{opacity:.6}}
+.lvl{height:10px;background:#2a2f3a;border-radius:10px;overflow:hidden;margin:14px auto 0;max-width:420px}.lvl i{display:block;height:100%;width:0;background:var(--acc)}
+ol{padding-left:0;list-style:none;columns:2;column-gap:20px}
+li{padding:6px 10px;border-radius:10px;cursor:pointer;break-inside:avoid;display:flex;gap:8px;align-items:center}
+li.cur{background:#24324a}li .s{width:20px;text-align:center}
+.kbd{display:inline-block;border:1px solid #444;border-radius:6px;padding:0 6px;font-size:14px;color:var(--fg)}
+</style></head><body><main>
+<h1>🎙 Record your trainer voice</h1>
+<p>Read each line like a coach in your gym: short, punchy, a bit of energy. Wear headphones, use your good mic (pick it in your Mac's sound settings), and leave a breath of silence before and after; I trim it.</p>
+<p>Keys: <span class="kbd">Space</span> record / stop (moves to the next line) · <span class="kbd">P</span> play · <span class="kbd">←</span> <span class="kbd">→</span> move · <span class="kbd">R</span> redo this line.</p>
+<div class="bar"><button id="mic">Allow microphone</button><span id="cnt" style="color:var(--dim)"></span><span style="flex:1"></span><button class="go" id="dl">Download all (.zip)</button></div>
+<div class="big"><div class="k" id="k"></div><div class="t" id="t">…</div>
+  <button class="recbtn" id="rec">● Record</button> <button id="play">▶ Play</button>
+  <div class="lvl"><i id="lv"></i></div></div>
+<ol id="list"></ol>
+</main>
+<script>
+let LINES = [], idx = 0, stream = null, rec = null, chunks = [], clips = {}, mime = '', actx, an;
+const $ = id => document.getElementById(id);
+fetch('voice/lines.json').then(r => r.json()).then(j => { LINES = j.lines; draw(); });
+function draw() {
+  const l = LINES[idx]; if (!l) return;
+  $('t').textContent = l.text; $('k').textContent = `${idx + 1} of ${LINES.length} · ${l.key}`;
+  $('list').innerHTML = LINES.map((x, i) => `<li data-i="${i}" class="${i === idx ? 'cur' : ''}"><span class="s">${clips[x.key] ? '✅' : '○'}</span>${x.text}</li>`).join('');
+  $('list').querySelectorAll('li').forEach(li => li.onclick = () => { idx = +li.dataset.i; draw(); });
+  $('cnt').textContent = `${Object.keys(clips).length} of ${LINES.length} recorded`;
+}
+async function getMic() {
+  if (stream) return;
+  stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } });
+  mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+  actx = new AudioContext(); an = actx.createAnalyser(); actx.createMediaStreamSource(stream).connect(an);
+  const buf = new Uint8Array(an.fftSize);
+  (function meter() { an.getByteTimeDomainData(buf); let m = 0; for (const v of buf) m = Math.max(m, Math.abs(v - 128)); $('lv').style.width = Math.min(100, m / 1.28) + '%'; requestAnimationFrame(meter); })();
+  $('mic').textContent = '🎙 Mic ready';
+}
+async function toggle() {
+  await getMic();
+  if (rec && rec.state === 'recording') { rec.stop(); return; }
+  chunks = []; rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  const key = LINES[idx].key;
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = () => { clips[key] = new Blob(chunks, { type: rec.mimeType }); $('rec').classList.remove('on'); $('rec').textContent = '● Record'; if (idx < LINES.length - 1) idx++; draw(); };
+  rec.start(); $('rec').classList.add('on'); $('rec').textContent = '■ Stop';
+}
+function play(i = idx) { const c = clips[LINES[i].key]; if (c) new Audio(URL.createObjectURL(c)).play(); }
+$('mic').onclick = getMic; $('rec').onclick = toggle; $('play').onclick = () => play();
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); toggle(); }
+  else if (e.key === 'p' || e.key === 'P') play();
+  else if (e.key === 'ArrowRight') { idx = Math.min(LINES.length - 1, idx + 1); draw(); }
+  else if (e.key === 'ArrowLeft') { idx = Math.max(0, idx - 1); draw(); }
+  else if (e.key === 'r' || e.key === 'R') { delete clips[LINES[idx].key]; draw(); toggle(); }
+});
+// Minimal ZIP (stored, no compression)
+const crcT = (() => { const t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = ~0; for (let i = 0; i < b.length; i++) c = crcT[(c ^ b[i]) & 255] ^ (c >>> 8); return (~c) >>> 0; };
+async function zip(files) {
+  const enc = new TextEncoder(), parts = [], cen = []; let off = 0;
+  for (const f of files) {
+    const data = new Uint8Array(await f.blob.arrayBuffer()), name = enc.encode(f.name), crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30)); h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, name.length, true);
+    parts.push(h, name, data);
+    const c = new DataView(new ArrayBuffer(46)); c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    cen.push(c, name); off += 30 + name.length + data.length;
+  }
+  const csize = cen.reduce((a, x) => a + x.byteLength, 0), e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, e], { type: 'application/zip' });
+}
+$('dl').onclick = async () => {
+  const ext = (mime.includes('mp4') ? 'm4a' : 'webm');
+  const files = LINES.filter(l => clips[l.key]).map(l => ({ name: `${l.key}.${ext}`, blob: clips[l.key] }));
+  if (!files.length) return alert('Nothing recorded yet');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(await zip(files)); a.download = 'trainer-voice-josh.zip'; a.click();
+};
+</script></body></html>
