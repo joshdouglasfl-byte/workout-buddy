@@ -542,7 +542,7 @@ function home() {
       .ring{transition:stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1)}
       .getgo{width:100%;font-size:52px;min-height:170px;border-radius:30px;background:linear-gradient(135deg,#3ddc84,#1fb6ff);color:#04210f;box-shadow:0 10px 40px rgba(61,220,132,.35);animation:pulse 2.4s ease-in-out infinite}
       @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.015)}}
-      .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:18px 0}
+      .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin:18px 0}
       .tile{background:var(--card);border-radius:22px;padding:18px 20px}
       .tile b{display:block;font-size:40px;line-height:1.1}
       .tile span{color:var(--dim);font-size:18px}
@@ -561,9 +561,8 @@ function home() {
     </div>
     <button class="getgo" id="go" data-say="started">${alive ? 'Keep Going! 💪' : 'Get Started! 💪'}</button>
     <div class="tiles">
-      <div class="tile"><b>🔥 ${st.n}</b><span>${streakText}<br>${streakSub}</span></div>
+      <div class="tile"><b>🔥 ${st.n}</b><span>${streakText}<br>${streakSub}${st.last ? '<br>Last workout ' + (st.sinceLast === 0 ? 'today' : st.sinceLast === 1 ? 'yesterday' : st.sinceLast + ' days ago') : ''}</span></div>
       <div class="tile"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}</span></div>
-      <div class="tile" id="wk" style="cursor:pointer"><b>📅 ${n.pace.text.replace(/ sets?.*$/, '')}</b><span>${st.last ? 'Last workout ' + (st.sinceLast === 0 ? 'today' : st.sinceLast === 1 ? 'yesterday' : st.sinceLast + ' days ago') : 'No workouts yet'}<br>Tap for week details ›</span></div>
     </div>
     <div class="row"><button class="sm" id="pickx">Pick exercise</button><button class="sm" id="hurt">Flag a hurt joint</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button><button class="sm" id="pickv" data-say="-">Choose voice</button></div>
     <div class="heard center"></div>`,
@@ -572,7 +571,6 @@ function home() {
   function go() { keepAwake(); if (!V.want) voiceStart(); upNext(); }
   on('go', go);
   on('pickx', pickExercise);
-  document.getElementById('wk').onclick = weekView;
   document.getElementById('heroWk').onclick = weekView;
   on('hurt', () => jointPicker(j => { event('joint_flag', '', j, 'flagged from home'); toast(`${j} flagged`); home(); }));
   on('refresh', async () => { await loadState(); home(); });
