@@ -54,7 +54,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118203538';   // set automatically on each commit
+const APP_VERSION = '20261118204103';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -207,14 +207,36 @@ function weightFor(ex, sets) {
 const fmtW = w => w == null ? 'Bodyweight' : `${+w.toFixed(1)} lb`;
 
 // Is the exercise waiting on a hurt joint?
+// Body areas. "joint" is the generic name exercises use (see JOINTS); left and right are tracked separately.
+const REGIONS = [
+  { id: 'neck', label: 'Neck', joint: 'Neck' },
+  { id: 'shR', label: 'Right shoulder', joint: 'Shoulder' }, { id: 'shL', label: 'Left shoulder', joint: 'Shoulder' },
+  { id: 'elR', label: 'Right elbow', joint: 'Elbow' }, { id: 'elL', label: 'Left elbow', joint: 'Elbow' },
+  { id: 'wrR', label: 'Right wrist', joint: 'Wrist' }, { id: 'wrL', label: 'Left wrist', joint: 'Wrist' },
+  { id: 'ub', label: 'Upper back', joint: 'Back' }, { id: 'lb', label: 'Lower back', joint: 'Back' },
+  { id: 'hpR', label: 'Right hip', joint: 'Hip' }, { id: 'hpL', label: 'Left hip', joint: 'Hip' },
+  { id: 'knR', label: 'Right knee', joint: 'Knee' }, { id: 'knL', label: 'Left knee', joint: 'Knee' }
+];
+const STATUS_COLOR = { good: '#38c172', sore: '#f5b53d', hurt: '#ef5350' };
+// Latest status per area: body_status events, plus older joint_flag / joint_clear rows (which applied to both sides)
+function bodyStatus(evs) {
+  const st = {}; REGIONS.forEach(r => st[r.label] = { status: 'good', t: null });
+  evs.slice().sort((a, b) => a.t - b.t).forEach(e => {
+    if (e.type === 'body_status' && st[e.joint]) st[e.joint] = { status: e.reason || 'good', t: e.t };
+    if (e.type === 'joint_flag' || e.type === 'joint_clear') REGIONS.filter(r => r.joint === e.joint).forEach(r => st[r.label] = { status: e.type === 'joint_flag' ? 'hurt' : 'good', t: e.t });
+  });
+  return st;
+}
+function setBody(label, status, why) { event('body_status', CUR ? CUR.name : '', label, status, why || ''); }
+// For one exercise: hurt areas (ask first), sore areas (lighter first set), and whether you said "wait" recently
 function jointState(ex, evs) {
-  const flags = {};
-  evs.slice().sort((a, b) => a.t - b.t).forEach(e => { if (e.type === 'joint_flag') flags[e.joint] = e.t; if (e.type === 'joint_clear') delete flags[e.joint]; });
-  const hit = ex.joints.filter(j => flags[j]);
-  if (!hit.length) return null;
+  const bs = bodyStatus(evs), mine = REGIONS.filter(r => ex.joints.includes(r.joint));
+  const hurt = mine.filter(r => bs[r.label].status === 'hurt').map(r => r.label);
+  const sore = mine.filter(r => bs[r.label].status === 'sore').map(r => r.label);
+  if (!hurt.length && !sore.length) return null;
   const recheck = setting('Injury Recheck (h)', 48) * HOUR;
-  const waited = evs.some(e => e.type === 'joint_wait' && e.ex === ex.name && Date.now() - e.t < recheck);
-  return { joints: hit, waiting: waited };
+  const waited = hurt.length > 0 && evs.some(e => e.type === 'joint_wait' && e.ex === ex.name && Date.now() - e.t < recheck);
+  return { joints: hurt, sore, waiting: waited };
 }
 
 // ---------- what's next ----------
@@ -546,6 +568,7 @@ function streakInfo(sets) {
   for (let i = days.length - 1; i > 0; i--) { if ((parseDate(days[i]) - parseDate(days[i - 1])) / DAY <= gap) n++; else break; }
   return { n, last, sinceLast, daysLeft: gap - sinceLast };
 }
+function alive0() { return sessionAlive() && SESSION.log.length; }
 function home() {
   if (UPDATE_READY && !(sessionAlive() && SESSION.log.length)) return applyUpdate();
   if (!CFG) return showSetup();
@@ -554,6 +577,7 @@ function home() {
     return watchEnd(summary);
   }
   if (!S) { screen(`<h1>Loading…</h1>`); loadState().then(() => S ? home() : showSetup()); return; }
+  if (!alive0()) { const due = bodyCheckDue(); if (due.length) return bodyCheckIn(due); }
   const n = whatsNext(), sets = allSets(), alive = sessionAlive();
   const pct = Math.min(100, Math.round(100 * n.totD / Math.max(1, n.totQ)));
   const st = streakInfo(sets);
@@ -569,7 +593,7 @@ function home() {
       .ring{transition:stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1)}
       .getgo{width:100%;font-size:52px;min-height:170px;border-radius:30px;background:linear-gradient(135deg,#3ddc84,#1fb6ff);color:#04210f;box-shadow:0 10px 40px rgba(61,220,132,.35);animation:pulse 2.4s ease-in-out infinite}
       @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.015)}}
-      .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin:18px 0}
+      .tiles{display:grid;grid-template-columns:1fr 1fr 220px;gap:16px;margin:18px 0}
       .tile{background:var(--card);border-radius:22px;padding:18px 20px}
       .tile b{display:block;font-size:40px;line-height:1.1}
       .tile span{color:var(--dim);font-size:18px}
@@ -590,8 +614,9 @@ function home() {
     <div class="tiles">
       <div class="tile" id="stTile" style="cursor:pointer"><b>🔥 ${st.n} <span style="font-size:22px;font-weight:600">${streakText}</span></b><span>${streakSub}${st.last ? '<br>Last workout ' + (st.sinceLast === 0 ? 'today' : st.sinceLast === 1 ? 'yesterday' : st.sinceLast + ' days ago') : ''}</span></div>
       <div class="tile" id="prTile" style="cursor:pointer"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}<br>Tap to see them ›</span></div>
+      <div class="tile" id="bodyTile" style="cursor:pointer;padding:8px 10px;text-align:center">${bodySvg(bodyStatus(allEvents()), 190, false)}<span>Tap to update</span></div>
     </div>
-    <div class="row"><button class="sm" id="pickx">Pick exercise</button><button class="sm" id="hurt">Flag a hurt joint</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button><button class="sm" id="pickv">Choose voice</button></div>
+    <div class="row"><button class="sm" id="pickx">Pick exercise</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button><button class="sm" id="pickv">Choose voice</button></div>
     <div class="heard center"></div>`,
     { ready: go, next: go, yes: go });
   requestAnimationFrame(() => setTimeout(() => { const r = document.getElementById('ring'); if (r) r.style.strokeDashoffset = C * (1 - pct / 100); }, 80));
@@ -601,7 +626,7 @@ function home() {
   document.getElementById('heroWk').onclick = weekView;
   document.getElementById('prTile').onclick = recordsView;
   document.getElementById('stTile').onclick = streaksView;
-  on('hurt', () => jointPicker(j => { event('joint_flag', '', j, 'flagged from home'); toast(`${j} flagged`); home(); }));
+  document.getElementById('bodyTile').onclick = () => bodyView();
   on('refresh', async () => { await loadState(); home(); });
   on('talk', () => { LS.set('talk', !LS.get('talk', true)); home(); });
   on('pickv', voicePicker);
@@ -628,6 +653,72 @@ function streaksView() {
       <p class="dim" style="font-size:17px">Based on dated workouts; the 13 notebook sessions with estimated dates aren't counted.</p></div>
     <button id="back" style="width:100%" data-say="back">Back</button>`);
   on('back', home); on('back2', home);
+}
+
+// ---------- body map ----------
+// Front view (you facing the screen, so your right side is on the left) plus a small back view for the back areas
+const BODY_POS = { neck: [100, 70], shR: [62, 92], shL: [138, 92], elR: [42, 162], elL: [158, 162], wrR: [32, 232], wrL: [168, 232], hpR: [82, 210], hpL: [118, 210], knR: [80, 292], knL: [120, 292] };
+function bodySvg(bs, size, tappable) {
+  const col = id => STATUS_COLOR[bs[REGIONS.find(r => r.id === id).label].status];
+  const g = '#3a4150';
+  const joint = id => `<circle data-r="${id}" cx="${BODY_POS[id][0]}" cy="${BODY_POS[id][1]}" r="${tappable ? 15 : 13}" fill="${col(id)}" stroke="#0f1115" stroke-width="3" ${tappable ? 'style="cursor:pointer"' : ''}/>`;
+  return `<svg viewBox="0 0 400 400" width="${size}" style="max-width:100%;display:block;margin:0 auto">
+    <g fill="${g}" stroke="${g}" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="100" cy="38" r="22"/><rect x="92" y="56" width="16" height="16"/>
+      <rect x="66" y="80" width="68" height="128" rx="22"/>
+      <path d="M62 92 L42 162 L32 232" stroke-width="16" fill="none"/><path d="M138 92 L158 162 L168 232" stroke-width="16" fill="none"/>
+      <path d="M82 210 L80 292 L78 378" stroke-width="20" fill="none"/><path d="M118 210 L120 292 L122 378" stroke-width="20" fill="none"/>
+      <circle cx="300" cy="38" r="22"/><rect x="292" y="56" width="16" height="16"/>
+      <rect x="262" y="80" width="76" height="132" rx="22"/>
+      <path d="M262 92 L244 162 L236 232" stroke-width="16" fill="none"/><path d="M338 92 L356 162 L364 232" stroke-width="16" fill="none"/>
+      <path d="M284 212 L282 292 L280 378" stroke-width="20" fill="none"/><path d="M316 212 L318 292 L320 378" stroke-width="20" fill="none"/>
+    </g>
+    <rect data-r="ub" x="272" y="92" width="56" height="52" rx="12" fill="${col('ub')}" stroke="#0f1115" stroke-width="3" ${tappable ? 'style="cursor:pointer"' : ''}/>
+    <rect data-r="lb" x="272" y="150" width="56" height="52" rx="12" fill="${col('lb')}" stroke="#0f1115" stroke-width="3" ${tappable ? 'style="cursor:pointer"' : ''}/>
+    ${Object.keys(BODY_POS).map(joint).join('')}
+    <text x="100" y="398" text-anchor="middle" fill="#9aa1ad" font-size="16">Front</text><text x="300" y="398" text-anchor="middle" fill="#9aa1ad" font-size="16">Back</text>
+    <text x="22" y="100" fill="#9aa1ad" font-size="15">R</text><text x="170" y="100" fill="#9aa1ad" font-size="15">L</text>
+  </svg>`;
+}
+function bodyView(selected) {
+  const bs = bodyStatus(allEvents());
+  const sel = selected && REGIONS.find(r => r.id === selected);
+  const notGood = REGIONS.filter(r => bs[r.label].status !== 'good');
+  const since = t => t ? t.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>How’s your body?</h2></div>
+    <p class="dim">Tap an area to set it. 🟢 Good · 🟡 Sore: lighter first set · 🔴 Hurt: ask before exercises that use it</p>
+    <div class="row" style="align-items:flex-start">
+      <div style="flex:3">${bodySvg(bs, 560, true)}</div>
+      <div style="flex:2">
+        ${sel ? `<div class="card"><h3>${esc(sel.label)}</h3><div class="dim" style="margin-bottom:12px">Now: ${bs[sel.label].status}${bs[sel.label].t ? ' since ' + since(bs[sel.label].t) : ''}</div>
+          <div class="chips" style="flex-direction:column">
+            <button data-st="good" style="background:#16391f;color:#6ee7a0">🟢 Good</button>
+            <button data-st="sore" style="background:#3d2f10;color:#f5c66b">🟡 Sore</button>
+            <button data-st="hurt" style="background:#3d1514;color:#ff8a87">🔴 Hurt</button></div></div>`
+          : `<div class="card"><h3>Not 100%</h3>${notGood.length ? notGood.map(r => `<div class="exrow" data-pick="${r.id}" style="cursor:pointer"><span style="flex:1">${bs[r.label].status === 'hurt' ? '🔴' : '🟡'} ${esc(r.label)}</span><span class="dim">since ${since(bs[r.label].t)}</span></div>`).join('') : '<p class="dim">Everything’s green. 💪</p>'}</div>`}
+      </div></div>
+    <button id="back" class="mt" style="width:100%">Back</button>`);
+  document.querySelectorAll('[data-r]').forEach(el => el.addEventListener('click', () => bodyView(el.getAttribute('data-r'))));
+  document.querySelectorAll('[data-pick]').forEach(el => el.onclick = () => bodyView(el.dataset.pick));
+  document.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { setBody(sel.label, b.dataset.st, 'body map'); toast(`${sel.label}: ${b.dataset.st}`); bodyView(); });
+  on('back', home); on('back2', home);
+}
+// Every 48 hours, ask about areas that aren't green (they never clear on their own)
+function bodyCheckDue() {
+  const bs = bodyStatus(allEvents()), snooze = local.bodySnooze || 0;
+  if (Date.now() < snooze) return [];
+  return REGIONS.filter(r => bs[r.label].status !== 'good' && bs[r.label].t && Date.now() - bs[r.label].t > 48 * HOUR);
+}
+function bodyCheckIn(due) {
+  const bs = bodyStatus(allEvents());
+  const r = due[0];
+  speak(`How is your ${r.label.toLowerCase()} today?`);
+  screen(`<div class="center" style="padding-top:20px"><h3>Body check-in${due.length > 1 ? ` · 1 of ${due.length}` : ''}</h3>
+    <h1>How’s your ${esc(r.label.toLowerCase())}?</h1><p class="dim" style="font-size:24px">It’s been ${bs[r.label].status} since ${bs[r.label].t.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}.</p>
+    <div class="row mt"><button data-st="good" style="background:#16391f;color:#6ee7a0">🟢 Good</button><button data-st="sore" style="background:#3d2f10;color:#f5c66b">🟡 Sore</button><button data-st="hurt" style="background:#3d1514;color:#ff8a87">🔴 Hurt</button></div>
+    <button class="sm mt" id="later">Ask me later</button><div class="heard"></div></div>`);
+  document.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { setBody(r.label, b.dataset.st, '48h check-in'); const rest = due.slice(1); rest.length ? bodyCheckIn(rest) : home(); });
+  on('later', () => { local.bodySnooze = Date.now() + 12 * HOUR; LS.set('local', local); home(); });
 }
 
 // ---------- records ----------
@@ -659,7 +750,7 @@ function upNext() {
   screen(`<div class="card"><h3>${n.extra ? 'Quota done. Extra set?' : 'Up next'}</h3><h1>${esc(p.ex.name)}</h1>
       <div class="big">${fmtW(w.w)}</div>
       <div class="setup mt">${esc(p.ex.setup)}</div>
-      <div class="dim mt">${p.done}/${p.ex.quota} this week · ${esc(p.ex.muscle)}${p.js ? ` · <span class="warn">${p.js.joints.join(', ')} flagged</span>` : ''}</div></div>
+      <div class="dim mt">${p.done}/${p.ex.quota} this week · ${esc(p.ex.muscle)}${p.js ? ` · <span class="warn">${p.js.joints.concat(p.js.sore).join(', ')} ${p.js.joints.length ? 'hurt' : 'sore'}</span>` : ''}</div></div>
     <button class="go" id="go" style="width:100%;font-size:40px;min-height:140px">${alive ? 'Continue' : 'Start'}</button>
     <div class="row mt"><button class="sm" id="pickx" data-say="pick">Pick something else</button><button class="sm" id="back">Back</button></div>
     <div class="heard center"></div>`,
@@ -769,12 +860,13 @@ function prep(name, opts = {}) {
   const sets = allSets(), evs = allEvents();
   // hurt joint check
   const js = jointState(ex, evs);
-  if (js && !opts.jointOk) {
+  if (js && js.joints.length && !opts.jointOk) {
     if (js.waiting) return nextUp([name]);
     return jointCheck(ex, js.joints);
   }
+  if (js && js.sore.length && !opts.lighter) opts = Object.assign({}, opts, { lighter: true, soreNote: js.sore.join(', ') + ' sore' });
   let w = (CUR && CUR.name === name && CUR.nextWeight !== undefined) ? { w: CUR.nextWeight, why: 'adjusted' } : weightFor(ex, sets);
-  if (opts.lighter && w.w != null) w = { w: Math.max(step(w.w), w.w - step(w.w)), why: 'lighter return set' };
+  if (opts.lighter && w.w != null) w = { w: Math.max(step(w.w), w.w - step(w.w)), why: opts.soreNote ? 'lighter first set: ' + opts.soreNote : 'lighter return set' };
   const setNo = (SESSION.countBy[name] || 0) + 1;
   // one-side: right first, sometimes left first (decided once per sitting)
   let first = 'Right';
@@ -810,12 +902,12 @@ function jointCheck(ex, joints) {
   speak(`Your ${joints.join(' and ')} was flagged. Check in before you lift.`);
   screen(`<div class="card"><h3>Joint check</h3><h1>${esc(ex.name)}</h1><p style="font-size:28px">Your <b class="warn">${joints.map(esc).join(', ')}</b> was flagged. Good to try this now?</p></div>
     <div class="row"><button class="go" id="y" data-say="try">Try it (lighter)</button><button id="n">Wait</button></div>
-    <div class="mt"><button class="sm" id="clr" style="width:100%" data-say="clear">It’s fine now, clear the flag</button></div><div class="heard center"></div>`,
+    <div class="mt"><button class="sm" id="clr" style="width:100%" data-say="clear">It’s fine now, set it to good</button></div><div class="heard center"></div>`,
     { yes: tryIt, no: wait });
   function tryIt() { event('joint_try', ex.name, joints.join(', ')); prep(ex.name, { jointOk: true, lighter: true }); }
   function wait() { event('joint_wait', ex.name, joints.join(', ')); toast(`Won't ask about ${ex.name} for ${setting('Injury Recheck (h)', 48)} hours`); nextUp([ex.name]); }
   on('y', tryIt); on('n', wait);
-  on('clr', () => { joints.forEach(j => event('joint_clear', ex.name, j)); prep(ex.name, { jointOk: true }); });
+  on('clr', () => { joints.forEach(j => setBody(j, 'good', 'cleared at joint check')); prep(ex.name, { jointOk: true }); });
 }
 
 // Tempo guide. Each rep = first move, hold, second move, hold. "Sec per Rep" is movement time; holds are added.
@@ -947,7 +1039,6 @@ function commit(tempoFit) {
   const reps = Math.min(...CUR.sides.map(s => s.reps)), dur = CUR.sides.reduce((a, s) => a + s.dur, 0);
   SESSION.log.push({ ex: CUR.name, equip: ex.equip, weight: CUR.weight, reps: CUR.sides.map(s => s.reps).join('/'), dur, rir: CUR.rir, off: CUR.off });
   SESSION.lastEx = CUR.name; SESSION.lastAt = Date.now();
-  if (CUR.lighter && !CUR.off) ex.joints.forEach(j => { /* clear only joints that were flagged */ const js = jointState(ex, allEvents()); if (js && js.joints.includes(j)) event('joint_clear', CUR.name, j, 'return set went fine'); });
   // personal record: heavier than ever, or more reps than ever at this weight
   checkPR(reps);
   // mid-session tweak only when a set is wildly off; "felt off" holds the weight
@@ -1022,13 +1113,13 @@ function skipFlow(name) {
   screen(`<h2>Why skip ${esc(name)}?</h2><div class="chips">${SKIP_REASONS.map(r => `<button data-r="${r}" data-say="${REASON_SAY[r]}">${r}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Never mind</button>`);
   document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
     const r = b.dataset.r;
-    const fin = joint => { event('skip', name, joint || '', r); if (joint) event('joint_flag', name, joint, 'flagged on skip'); SESSION.skipped.push(name); saveSession(); nextUp([name]); };
+    const fin = joint => { event('skip', name, joint || '', r); if (joint) setBody(joint, 'hurt', 'flagged on skip'); SESSION.skipped.push(name); saveSession(); nextUp([name]); };
     if (r === 'Joint hurts') jointPicker(fin); else fin('');
   });
   on('back', () => prep(name));
 }
 function jointPicker(cb) {
-  screen(`<h2>Which joint?</h2><div class="chips">${['Shoulder', 'Elbow', 'Wrist', 'Back', 'Hip', 'Knee', 'Neck'].map(j => `<button data-j="${j}">${j}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Back</button>`);
+  screen(`<h2>Which area hurts?</h2><div class="grid2" style="grid-template-columns:repeat(3,1fr)">${REGIONS.map(r => `<button class="sm" data-j="${r.label}">${r.label}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Back</button>`);
   document.querySelectorAll('[data-j]').forEach(b => b.onclick = () => cb(b.dataset.j));
   on('back', home);
 }
@@ -1037,7 +1128,7 @@ function endFlow() {
   clearInterval(restTimer); clearInterval(setTimer);
   if (!SESSION || !SESSION.log.length) { SESSION = null; LS.set('session', null); return home(); }
   screen(`<h2>Wrapping up. Why stop here?</h2><div class="chips">${QUIT_REASONS.map(r => `<button data-r="${r}" data-say="${REASON_SAY[r]}">${r}</button>`).join('')}</div>`, { yes: () => finish('Done for now') });
-  document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { const r = b.dataset.r; if (r === 'Something hurts') jointPicker(j => { event('joint_flag', '', j, 'flagged on quit'); finish(r); }); else finish(r); });
+  document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { const r = b.dataset.r; if (r === 'Something hurts') jointPicker(j => { setBody(j, 'hurt', 'flagged on quit'); finish(r); }); else finish(r); });
   function finish(r) { event('session_end', '', '', r, `${SESSION.log.length} sets`); watchEnd(summary); }
 }
 function watchEnd(next) {
