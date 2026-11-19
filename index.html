@@ -53,7 +53,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118202753';   // set automatically on each commit
+const APP_VERSION = '20261118203116';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -394,6 +394,9 @@ let SAYMAP = {};
 function annotate() {
   SAYMAP = {};
   $app.querySelectorAll('button').forEach(b => {
+    // undo any earlier underline so the button's words are plain text again
+    b.querySelectorAll('span.say').forEach(sp => sp.replaceWith(document.createTextNode(sp.textContent)));
+    b.normalize();
     if (b.dataset.say === '-') return;
     const textNode = [...b.childNodes].find(n => n.nodeType === 3 && /[a-z]/i.test(n.textContent));
     const ds = (b.dataset.say || '').toLowerCase().trim();
