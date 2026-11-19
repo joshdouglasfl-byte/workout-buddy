@@ -53,7 +53,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118200734';   // set automatically on each commit
+const APP_VERSION = '20261118200845';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -406,7 +406,7 @@ function vlog(heard, action) {
   try { queue('Events', [tstr(new Date()), SESSION ? SESSION.id : '', 'voice', SCREEN, '', action, heard, uid()], true); } catch {}
 }
 // Pick the most natural installed English voice: your saved choice, else Premium, then Enhanced, then the default
-const NOVELTY = /eloquence|novelty|bad news|bells|boing|bubbles|cellos|whisper|zarvox|trinoids|organ|superstar|jester|wobble|albert|fred|junior|ralph|good news|hysterical|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley|deranged|pipe/i;
+const NOVELTY = /eloquence|bahh|novelty|bad news|bells|boing|bubbles|cellos|whisper|zarvox|trinoids|organ|superstar|jester|wobble|albert|fred|junior|ralph|good news|hysterical|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley|deranged|pipe/i;
 function voices() { try { return speechSynthesis.getVoices().filter(v => /^en[-_]/i.test(v.lang) && !NOVELTY.test(v.name + ' ' + v.voiceURI)); } catch { return []; } }
 function voiceScore(v) { const n = v.name + ' ' + v.voiceURI; return (/premium/i.test(n) ? 100 : /enhanced/i.test(n) ? 50 : 0) + (/en[-_]US/i.test(v.lang) ? 5 : 0) + (/compact|eloquence|novelty|bad news|bells|boing|bubbles|cellos|whisper|zarvox|trinoids|organ|superstar|jester|wobble|albert|fred|junior|ralph/i.test(n) ? -200 : 0); }
 function bestVoice() {
