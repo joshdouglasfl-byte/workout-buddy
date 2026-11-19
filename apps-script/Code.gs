@@ -115,9 +115,10 @@ function fireLoseItSync_(ss, rows) {
 }
 
 // Change one field of one exercise (for example Tempo after a tempo check).
-const EDITABLE = ['Tempo', 'Sec per Rep'];
+const EDITABLE = ['Tempo', 'Sec per Rep', 'Active'];
 function updateExercise_(ss, exercise, field, value) {
   if (EDITABLE.indexOf(field) < 0) throw new Error('field not editable: ' + field);
+  if (field === 'Active' && value !== 'Yes' && value !== 'No') throw new Error('Active must be Yes or No');
   const sh = ss.getSheetByName('Exercises');
   const vals = sh.getDataRange().getValues();
   const col = vals[0].indexOf(field);

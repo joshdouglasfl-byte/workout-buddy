@@ -540,9 +540,29 @@ function watchGate(next) {
 
 function pickExercise() {
   const n = whatsNext();
-  screen(`<h2>Pick an exercise</h2><div class="grid2">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" data-say="${NAME_SAY[i.ex.name] || ''}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div><button class="mt" id="back" style="width:100%">Back</button>`);
+  screen(`<h2>Pick an exercise</h2><div class="grid2">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" data-say="${NAME_SAY[i.ex.name] || ''}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div>
+    <div class="row mt"><button class="sm" id="edit" data-say="edit">Edit list</button><button class="sm" id="req" data-say="request">Request exercise</button><button class="sm" id="back">Back</button></div>`);
   document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { const x = b.dataset.x; if (!sessionAlive()) watchGate(() => prep(x)); else prep(x); });
+  on('edit', editExercises);
+  on('req', () => openNote('developer', 'Exercise request: '));
   on('back', home);
+}
+
+// Turn exercises on or off for "what's next" and the weekly quota. Saved to the Exercises tab (Active column).
+function editExercises() {
+  const all = ((S && S.exercises) || []).slice().sort((a, b) => (num(a['Order']) ?? 99) - (num(b['Order']) ?? 99));
+  screen(`<h2>Edit exercise list</h2><p class="dim">Tap to turn an exercise on or off. Off exercises aren't suggested and don't count toward the weekly quota.</p>
+    <div class="grid2">${all.map(e => { const onx = e['Active'] === 'Yes'; return `<button class="sm" data-t="${esc(e['Exercise'])}" data-say="-" style="text-align:left;${onx ? '' : 'opacity:.55'}">${onx ? '✅' : '⬜️'} ${esc(e['Exercise'])}<br><span class="dim" style="font-size:18px">${esc(e['Day Type'])} · ${esc(e['Primary Muscle'])}${onx ? '' : ' · off'}</span></button>`; }).join('')}</div>
+    <div class="row mt"><button class="sm" id="req" data-say="request">Request exercise</button><button class="go" id="done" data-say="done">Done</button></div>`);
+  document.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
+    const name = b.dataset.t, row = S.exercises.find(e => e['Exercise'] === name);
+    const val = row['Active'] === 'Yes' ? 'No' : 'Yes';
+    row['Active'] = val; LS.set('state', S); editExercises();      // update right away, save in the background
+    try { await api({ action: 'updateExercise', exercise: name, field: 'Active', value: val }); toast(`${name}: ${val === 'Yes' ? 'on' : 'off'}`); }
+    catch (e) { toast('Could not save that change, try again'); row['Active'] = val === 'Yes' ? 'No' : 'Yes'; LS.set('state', S); editExercises(); }
+  });
+  on('req', () => openNote('developer', 'Exercise request: '));
+  on('done', pickExercise);
 }
 
 function weekView() {
