@@ -14,6 +14,14 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:22px/1.
 body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
 #top{display:flex;align-items:center;gap:14px;padding:12px 22px;font-size:18px;color:var(--dim)}
 #top .sp{flex:1}
+#mic{width:78px;height:78px;border-radius:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:var(--card);flex:0 0 auto;transition:background .2s}
+#mic svg{width:50px;height:50px}
+#mic.live{background:#14532d;color:#4ade80;box-shadow:0 0 0 0 rgba(74,222,128,.6);animation:micPulse 1.8s infinite}
+#mic.off{background:#4a1515;color:#f87171}
+#mic.paused{background:var(--card);color:#8b93a1}
+@keyframes micPulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.55)}70%{box-shadow:0 0 0 14px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+#micLbl{font-size:22px;color:#f87171;font-weight:700;display:none}
+#micLbl.show{display:inline}
 .pill{padding:6px 14px;border-radius:99px;background:var(--card);color:var(--dim)}
 .pill.on{background:#16391f;color:var(--ok)} .pill.warn{background:#3d2f10;color:var(--warn)} .pill.bad{background:#3d1514;color:var(--bad)}
 #app{padding:2px 20px 14px}
@@ -54,13 +62,13 @@ button .say{color:inherit}
 </style>
 </head>
 <body>
-<div id="top"><b>Workout Buddy</b><span class="sp"></span><span id="noteT" class="pill">💬 Tell trainer</span><span id="noteD" class="pill">🛠 Tell developer</span><span id="sync" class="pill">…</span><span id="mic" class="pill">🎙 off</span><span id="gear" class="pill" style="font-size:22px;padding:2px 12px;cursor:pointer">⚙️</span></div>
+<div id="top"><b>Workout Buddy</b><span class="sp"></span><span id="noteT" class="pill">💬 Tell trainer</span><span id="noteD" class="pill">🛠 Tell developer</span><span id="sync" class="pill">…</span><span id="gear" class="pill" style="font-size:22px;padding:2px 12px;cursor:pointer">⚙️</span><span id="micLbl">tap to use voice →</span><div id="mic" class="off" title="Voice"></div></div>
 <div id="noteBox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:50;padding:40px"></div>
 <div id="app"></div>
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119150433';   // set automatically on each commit
+const APP_VERSION = '20261119150838';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -360,7 +368,7 @@ function voiceStart(why) {
     if (ran < 3000) V.quickStops = (V.quickStops || 0) + 1; else { if (V.quickStops) vlog('', `mic had ${V.quickStops} quick stops`); V.quickStops = 0; vlog('', `mic stopped after ${Math.round(ran / 1000)}s`); }
     if (V.quickStops >= 4) {               // it keeps failing: stop retrying until the mic badge is tapped
       vlog('', 'mic keeps stopping, waiting for a tap'); V.want = false; V.quickStops = 0;
-      const el = document.getElementById('mic'); el.className = 'pill warn'; el.textContent = '🎙 tap to listen'; return;
+      micUI(); return;
     }
     if (V.want && !talking()) setTimeout(() => { try { voiceStart('auto restart'); } catch (err) { vlog('', 'restart failed: ' + err.message); } }, 300);
   };
@@ -370,7 +378,7 @@ function voiceStart(why) {
 const talking = () => V.speaking || ('speechSynthesis' in window && speechSynthesis.speaking);
 setInterval(() => { if (V.want && !V.on && !V.paused && !V.restarting && !talking()) voiceStart('watchdog'); }, 4000);
 // While the beat and callouts play during a set, the iPad can't listen reliably, so the mic pauses and comes back after
-function micPause() { if (V.paused) return; V.paused = true; try { V.rec && V.rec.abort(); } catch {} V.on = false; const el = document.getElementById('mic'); if (el) { el.className = 'pill'; el.textContent = '🎙 pacing…'; } }
+function micPause() { if (V.paused) return; V.paused = true; try { V.rec && V.rec.abort(); } catch {} V.on = false; micUI(); }
 // The iPad can leave the mic deaf while the sound engine is active, so put the sound engine to sleep before listening again
 function micResume(why) {
   if (!V.paused) return; V.paused = false; V.quickStops = 0;
@@ -384,11 +392,17 @@ function micResume(why) {
   if (V.want) setTimeout(() => voiceStart(why || 'after pacing'), 700); else micUI();
 }
 function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
+// Voice status square: live mic when listening, mic with a no-sign when off (red) or paused for the set's pacing (gray)
+const MIC_SVG = '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" fill="currentColor"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M8.5 21h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>';
+const NO_SVG = '<circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4.6 4.6l14.8 14.8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>';
 function micUI() {
-  const el = document.getElementById('mic');
-  if (V.needTap && !V.on) { el.className = 'pill warn'; el.textContent = '🎙 tap anywhere to listen'; return; }
-  el.className = 'pill' + (V.on ? ' on' : ''); el.textContent = V.on ? '🎙 listening' : '🎙 off';
+  const el = document.getElementById('mic'); if (!el) return;
+  const state = V.on ? 'live' : V.paused ? 'paused' : 'off';
+  if (el.dataset.state !== state) { el.dataset.state = state; el.className = state; el.innerHTML = `<svg viewBox="0 0 24 24">${state === 'live' ? MIC_SVG : `<g transform="translate(4.2 4.2) scale(.65)">${MIC_SVG}</g>${NO_SVG}`}</svg>`; }
+  const lbl = document.getElementById('micLbl');
+  if (lbl) lbl.classList.toggle('show', state === 'off' && SCREEN_IS_HOME);
 }
+var SCREEN_IS_HOME = false;
 // Safari only lets the mic restart after a tap: any tap on the page brings it back if it dropped
 document.addEventListener('click', () => { if (!V.paused && (V.needTap || (V.want && !V.on)) && SR) { V.needTap = false; V.quickStops = 0; voiceStart('tap'); } }, true);
 // right after a beep or spoken prompt, make sure the mic is still running
@@ -607,7 +621,7 @@ function event(type, exName = '', joint = '', reason = '', detail = '') {
 
 // ---------- screens ----------
 let CUR = null;   // the set in progress
-function screen(html, handlers) { if (V.paused && !(html || '').includes('id="clock"')) micResume('after set'); if (NOTE) { $app.innerHTML = html; NOTE.saved = handlers || null; const t0 = $app.querySelector('h1,h2,h3'); NOTE.screen = t0 ? t0.textContent.slice(0, 40) : NOTE.screen; return; } V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; V.recent = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
+function screen(html, handlers) { if (V.paused && !(html || '').includes('id="clock"')) micResume('after set'); if (NOTE) { $app.innerHTML = html; NOTE.saved = handlers || null; const t0 = $app.querySelector('h1,h2,h3'); NOTE.screen = t0 ? t0.textContent.slice(0, 40) : NOTE.screen; return; } V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; V.recent = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; SCREEN_IS_HOME = !!$app.querySelector('#lvTile'); micUI(); annotate(); }
 function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
 
 function showSetup() {
