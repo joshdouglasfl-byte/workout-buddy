@@ -48,13 +48,13 @@ button .say{color:inherit}
 </style>
 </head>
 <body>
-<div id="top"><b>Workout Buddy</b><span class="sp"></span><span id="noteT" class="pill">💬 Tell trainer</span><span id="noteD" class="pill">🛠 Tell developer</span><span id="sync" class="pill">…</span><span id="mic" class="pill">🎙 off</span></div>
+<div id="top"><b>Workout Buddy</b><span class="sp"></span><span id="noteT" class="pill">💬 Tell trainer</span><span id="noteD" class="pill">🛠 Tell developer</span><span id="sync" class="pill">…</span><span id="mic" class="pill">🎙 off</span><span id="gear" class="pill" style="font-size:22px;padding:2px 12px;cursor:pointer">⚙️</span></div>
 <div id="noteBox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:50;padding:40px"></div>
 <div id="app"></div>
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118204228';   // set automatically on each commit
+const APP_VERSION = '20261118204640';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -616,20 +616,15 @@ function home() {
       <div class="tile" id="prTile" style="cursor:pointer"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}<br>Tap to see them ›</span></div>
       <div class="tile" id="bodyTile" style="cursor:pointer;padding:8px 10px;text-align:center">${bodySvg(bodyStatus(allEvents()), 190, false)}<span>Tap to update</span></div>
     </div>
-    <div class="row"><button class="sm" id="pickx">Pick exercise</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button><button class="sm" id="pickv">Choose voice</button></div>
     <div class="heard center"></div>`,
     { ready: go, next: go, yes: go });
   requestAnimationFrame(() => setTimeout(() => { const r = document.getElementById('ring'); if (r) r.style.strokeDashoffset = C * (1 - pct / 100); }, 80));
   function go() { keepAwake(); if (!V.want) voiceStart(); upNext(); }
   on('go', go);
-  on('pickx', pickExercise);
   document.getElementById('heroWk').onclick = weekView;
   document.getElementById('prTile').onclick = recordsView;
   document.getElementById('stTile').onclick = streaksView;
   document.getElementById('bodyTile').onclick = () => bodyView();
-  on('refresh', async () => { await loadState(); home(); });
-  on('talk', () => { LS.set('talk', !LS.get('talk', true)); home(); });
-  on('pickv', voicePicker);
 }
 
 // ---------- streaks ----------
@@ -739,6 +734,27 @@ function recordsView() {
   on('back', home); on('back2', home);
 }
 
+// ---------- settings (gear) ----------
+function settingsView() {
+  if (alive0()) return toast('Settings are available between sessions');
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>⚙️ Settings</h2></div>
+    <div class="grid2">
+      <button id="ex" style="text-align:left">🏋️ Exercises<br><span class="dim" style="font-size:18px">See, start, turn on or off, request new</span></button>
+      <button id="body" style="text-align:left">🧍 Body map<br><span class="dim" style="font-size:18px">Mark areas good, sore or hurt</span></button>
+      <button id="talk" style="text-align:left">🔊 Voice prompts: ${LS.get('talk', true) ? 'on' : 'off'}<br><span class="dim" style="font-size:18px">Whether the app talks to you</span></button>
+      <button id="pickv" style="text-align:left">🗣️ Choose voice<br><span class="dim" style="font-size:18px">The voice used for prompts</span></button>
+      <button id="refresh" style="text-align:left">🔄 Reload plan<br><span class="dim" style="font-size:18px">Fetch the latest from your sheet</span></button>
+    </div>
+    <button class="mt" id="back" style="width:100%">Back</button>`);
+  on('ex', () => pickExercise(settingsView));
+  on('body', () => bodyView());
+  on('talk', () => { LS.set('talk', !LS.get('talk', true)); settingsView(); });
+  on('pickv', voicePicker);
+  on('refresh', async () => { await loadState(); toast('Plan reloaded'); settingsView(); });
+  on('back', home); on('back2', home);
+}
+document.getElementById('gear').onclick = () => { unlockAudio(); if (NOTE) closeNote(); settingsView(); };
+
 // ---------- up next: just the next exercise ----------
 function upNext() {
   const n = whatsNext(), alive = sessionAlive(), p = n.pick;
@@ -768,7 +784,7 @@ function voicePicker() {
     <div class="grid2"><button class="sm" data-v="system" style="text-align:left${LS.get('voice', '') === 'system' ? ';outline:4px solid var(--acc)' : ''}">iPad default<br><span class="dim" style="font-size:18px">let iPadOS choose</span></button>${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="${esc(v.name.toLowerCase().split(' ')[0])}" style="text-align:left${LS.get('voice', '') !== 'system' && cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
     <button class="go mt" id="done" style="width:100%" data-say="done">Done</button>`);
   document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { LS.set('voice', b.dataset.v); const was = LS.get('talk', true); LS.set('talk', true); speak('Next up: squats, thirty pounds.'); LS.set('talk', was); voicePicker(); });
-  on('done', home);
+  on('done', settingsView);
 }
 function watchGate(next) {
   if (setting('Watch Reminder', 'Yes') !== 'Yes') { newSession(); return next(); }
@@ -782,14 +798,16 @@ function watchGate(next) {
   on('ok', ok); on('nowatch', noWatch); on('cancel', home);
 }
 
-function pickExercise() {
+let EX_BACK = null;
+function pickExercise(back) {
+  if (typeof back === 'function') EX_BACK = back; else if (back !== 'keep') EX_BACK = null;
   const n = whatsNext();
-  screen(`<h2>Pick an exercise <span class="dim" style="font-size:22px">(active)</span></h2><div class="grid2">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" data-say="${NAME_SAY[i.ex.name] || ''}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div>
+  screen(`<h2>Exercises <span class="dim" style="font-size:22px">(active · tap one to start it)</span></h2><div class="grid2">${n.info.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" data-say="${NAME_SAY[i.ex.name] || ''}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div>
     <div class="row mt"><button class="sm" id="edit" data-say="edit">Edit list</button><button class="sm" id="req" data-say="request">Request exercise</button><button class="sm" id="back">Back</button></div>`);
   document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { const x = b.dataset.x; if (!sessionAlive()) watchGate(() => prep(x)); else prep(x); });
   on('edit', editExercises);
   on('req', () => openNote('developer', 'Exercise request: '));
-  on('back', home);
+  on('back', () => (EX_BACK || home)());
 }
 
 // Turn exercises on or off for "what's next" and the weekly quota. Saved to the Exercises tab (Active column).
@@ -807,7 +825,7 @@ function editExercises() {
     catch (e) { toast('Could not save that change, try again'); row['Active'] = val === 'Yes' ? 'No' : 'Yes'; LS.set('state', S); editExercises(); }
   });
   on('req', () => openNote('developer', 'Exercise request: '));
-  on('done', pickExercise);
+  on('done', () => pickExercise('keep'));
 }
 
 function weekView() {
