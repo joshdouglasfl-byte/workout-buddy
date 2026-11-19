@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119100830';   // set automatically on each commit
+const APP_VERSION = '20261119101226';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -491,6 +491,18 @@ function speak(text) {
     speechSynthesis.speak(u);
   } catch {}
 }
+// Short trainer callouts during a set ("Down!" "Up!"). They don't restart the mic after each word, only once after a burst.
+function callout(word) {
+  if (!('speechSynthesis' in window) || !LS.get('talk', true)) return;
+  try {
+    const u = new SpeechSynthesisUtterance(word); u.rate = 1.15; u.volume = 1;
+    const bv = bestVoice(); if (bv) { u.voice = bv; u.lang = bv.lang; }
+    V.speaking = true; V.ttsWords = new Set(['up', 'down', 'done', 'dun', 'don', 'town', 'op']);
+    V.calloutUntil = Date.now() + 2500;               // "down" can sound like "done": ignore done just after a callout
+    u.onend = u.onerror = () => { V.calloutUntil = Date.now() + 900; clearTimeout(V.coT); V.coT = setTimeout(() => { V.speaking = false; micRestartAfterSpeech(); }, 1600); };
+    speechSynthesis.speak(u);
+  } catch {}
+}
 let actx = null;
 function unlockAudio() { try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {} }
 function beep(f = 880, ms = 160) { try { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); micCheckSoon(); } catch {} }
@@ -605,6 +617,8 @@ function home() {
   const st = streakInfo(sets);
   const prs = ((S && S.progress) || []).filter(r => r['Type'] === 'PR');
   const prWeek = prs.filter(r => parseDate(r['Date']) >= weekStart()).length;
+  const led = xpLedger(), lv = levelFor(xpTotal(led)), td = dstr(new Date());
+  const xpToday = led.filter(e => dstr(e.t) === td).reduce((a, e) => a + e.xp, 0);
   const mood = n.totD >= n.totQ ? 'done' : n.totD === 0 ? 'start' : /Behind/.test(n.pace.text) ? 'behind' : /Ahead/.test(n.pace.text) ? 'ahead' : 'pace';
   const R = 88, C = 2 * Math.PI * R;
   const byDay = st.n ? new Date(st.last.getTime() + setting('Streak Gap Allowed (days)', 3) * DAY).toLocaleDateString('en-US', { weekday: 'short' }) : '';
@@ -638,6 +652,9 @@ function home() {
       <div class="tile" id="prTile" style="cursor:pointer"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}<br>Tap to see them ›</span></div>
       <div class="tile" id="bodyTile" style="cursor:pointer;padding:8px 10px;text-align:center">${bodySvg(bodyStatus(allEvents()), 170, false)}<span>Tap to update</span></div>
     </div>
+    <div class="tile" id="lvTile" style="cursor:pointer;margin-top:16px;display:flex;align-items:center;gap:22px;padding:14px 22px">
+      <div style="flex:0 0 auto;text-align:center"><div style="font-size:18px;color:var(--dim)">LEVEL</div><div style="font-size:56px;font-weight:800;line-height:1;color:#ffd166">${lv.L}</div></div>
+      <div style="flex:1"><div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:30px;display:inline">⭐ ${lv.title}</b><span style="font-size:18px;color:var(--dim)">${xpToday ? `<span class="ok">+${xpToday} XP today</span> · ` : ''}${lv.need - lv.into} XP to level ${lv.L + 1} ›</span></div><div style="margin-top:8px">${levelBar(lv, 20)}</div></div></div>
     <div class="heard center"></div>`,
     { ready: go, next: go, yes: go });
   requestAnimationFrame(() => setTimeout(() => { const r = document.getElementById('ring'); if (r) r.style.strokeDashoffset = C * (1 - pct / 100); }, 80));
@@ -647,6 +664,81 @@ function home() {
   document.getElementById('prTile').onclick = recordsView;
   document.getElementById('stTile').onclick = streaksView;
   document.getElementById('bodyTile').onclick = () => bodyView();
+  document.getElementById('lvTile').onclick = levelsView;
+}
+
+// ---------- levels (XP) ----------
+// XP is worked out from the Sets and Progress tabs every time, so nothing extra is stored and the trainer can reproduce it.
+// Counts app-era training only (from the Levels Start setting, default 2026-11-18).
+const XP = { set: 10, push: 5, pr: 25, quota: 20, week: 100, streak: 50, streakEvery: 5 };
+const LEVEL_TITLES = [[1, 'Rookie'], [3, 'Regular'], [5, 'Grinder'], [8, 'Iron'], [12, 'Steel'], [16, 'Titan'], [20, 'Legend'], [25, 'Mythic']];
+const levelCost = L => Math.round(250 * Math.pow(L, 1.1) / 50) * 50;        // XP to go from level L to L+1: quick early, slower later
+function levelTitle(L) { let t = 'Rookie'; LEVEL_TITLES.forEach(([n, name]) => { if (L >= n) t = name; }); return t; }
+function levelFor(xp) {
+  let L = 1, base = 0;
+  while (xp >= base + levelCost(L)) { base += levelCost(L); L++; }
+  return { L, title: levelTitle(L), into: xp - base, need: levelCost(L), xp };
+}
+function xpLedger() {
+  const start = parseDate(setting('Levels Start', '2026-11-18')) || new Date(2026, 10, 18);
+  start.setHours(0, 0, 0, 0);
+  const exs = exercises(), quota = Object.fromEntries(exs.map(e => [e.name, e.quota]));
+  // one entry per set (both sides of a one-side set count once)
+  const seen = new Map();
+  allSets().filter(x => x.reps != null && x.t >= start && !x.est).forEach(x => {
+    const k = `${x.session}|${x.ex}|${x.set}`;
+    if (!seen.has(k)) seen.set(k, x);
+  });
+  const sets = [...seen.values()].sort((a, b) => a.t - b.t);
+  const out = [], perWeek = {}, weekDone = new Set();
+  sets.forEach(x => {
+    const wk = dstr(weekStart(x.t)), c = (perWeek[wk] = perWeek[wk] || {});
+    c[x.ex] = (c[x.ex] || 0) + 1;
+    out.push({ t: x.t, xp: XP.set, why: 'Set', ex: x.ex });
+    const q = quota[x.ex];
+    if ((x.set || 0) >= 3 || (q && c[x.ex] === q)) out.push({ t: x.t, xp: XP.push, why: 'Push set', ex: x.ex });
+    if (q && c[x.ex] === q) out.push({ t: x.t, xp: XP.quota, why: `${x.ex} weekly quota`, ex: x.ex });
+    if (!weekDone.has(wk) && exs.length && exs.every(e => (c[e.name] || 0) >= e.quota)) { weekDone.add(wk); out.push({ t: x.t, xp: XP.week, why: 'Whole week complete' }); }
+  });
+  const prRows = ((S && S.progress) || []).concat(outbox.filter(o => o.sheet === 'Progress').map(o => rowToObj('Progress', o.row)));
+  const prSeen = new Set();
+  prRows.filter(r => r['Type'] === 'PR').forEach(r => {
+    if (prSeen.has(r['Row ID'])) return; prSeen.add(r['Row ID']);
+    const t = parseDate(r['Date']); if (t && t >= start) out.push({ t, xp: XP.pr, why: 'PR: ' + r['Name'] });
+  });
+  // streak milestones: every 5 workout days in a row
+  streakChains(sets).forEach(ch => {
+    const days = [...new Set(sets.map(x => dstr(x.t)))].sort().filter(d => { const t = parseDate(d); return t >= ch.start && t <= ch.end; });
+    for (let n = XP.streakEvery; n <= ch.n; n += XP.streakEvery) { const d = parseDate(days[n - 1]); if (d) out.push({ t: d, xp: XP.streak, why: `${n}-workout streak` }); }
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+function xpTotal(led) { return (led || xpLedger()).reduce((a, e) => a + e.xp, 0); }
+function levelBar(lv, h = 18) { const pct = Math.round(100 * lv.into / lv.need); return `<div style="background:rgba(255,255,255,.12);border-radius:${h}px;height:${h}px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#ffd166,#f78c6b);border-radius:${h}px"></div></div>`; }
+// After each set: note XP earned and celebrate a level up
+function xpAfterSet(before) {
+  const after = levelFor(xpTotal());
+  const gained = after.xp - before.xp;
+  if (gained > 0) CUR.xpGain = gained;
+  if (after.L > before.L) { CUR.levelUp = after; toast(`⭐ Level up! Level ${after.L} · ${after.title}`); beep(1175, 160); setTimeout(() => beep(1568, 260), 180); }
+}
+function levelsView() {
+  const led = xpLedger(), lv = levelFor(xpTotal(led));
+  const ws = weekStart(), today = dstr(new Date());
+  const wk = led.filter(e => e.t >= ws), wkXp = wk.reduce((a, e) => a + e.xp, 0);
+  const group = {}; wk.forEach(e => { const k = /^PR/.test(e.why) ? 'Personal records' : /quota/.test(e.why) ? 'Weekly quotas hit' : e.why === 'Set' ? 'Sets' : /streak/.test(e.why) ? 'Streak bonus' : e.why; group[k] = (group[k] || 0) + e.xp; });
+  const ladder = []; let base = 0; for (let L = 1; L <= Math.max(lv.L + 4, 8); L++) { ladder.push({ L, at: base, title: levelTitle(L) }); base += levelCost(L); }
+  const recent = led.filter(e => e.why !== 'Set').slice(-8).reverse();
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>⭐ Levels</h2></div><div class="cols"><div>
+    <div class="card center"><div style="font-size:30px;color:var(--dim)">Level</div><div class="huge" style="font-size:150px;line-height:1">${lv.L}</div><div style="font-size:40px;font-weight:800;color:#ffd166">${lv.title}</div>
+      <div class="mt">${levelBar(lv, 24)}</div><div class="dim mt" style="font-size:22px">${lv.into} / ${lv.need} XP · ${lv.need - lv.into} to level ${lv.L + 1}</div></div>
+    <div class="card"><h3>How you earn XP</h3><div style="font-size:22px;line-height:1.6">
+      Every set: <b>${XP.set}</b> · Push set: <b>+${XP.push}</b><br>Personal record: <b>+${XP.pr}</b><br>Hit an exercise’s weekly quota: <b>+${XP.quota}</b><br>Whole week complete: <b>+${XP.week}</b><br>Every ${XP.streakEvery} workouts in a streak: <b>+${XP.streak}</b></div>
+      <p class="dim" style="font-size:18px">Levels come quickly at first, then take longer. Counts training in the app from ${esc(setting('Levels Start', '2026-11-18'))}.</p></div></div><div>
+    <div class="card"><h3>This week: ${wkXp} XP</h3>${Object.entries(group).map(([k, v]) => `<div class="exrow"><span class="n">${esc(k)}</span><span>+${v}</span></div>`).join('') || '<p class="dim">Nothing yet this week.</p>'}</div>
+    <div class="card"><h3>Recent bonuses</h3>${recent.map(e => `<div class="exrow"><span class="n">${esc(e.why)}</span><span>+${e.xp}</span><span class="dim" style="flex:0 0 110px;text-align:right">${dstr(e.t) === today ? 'today' : e.t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span></div>`).join('') || '<p class="dim">Push sets, records and quotas show up here.</p>'}</div>
+    <div class="card"><h3>The ladder</h3>${ladder.map(r => `<div class="exrow" style="${r.L === lv.L ? 'color:#ffd166;font-weight:800' : r.L < lv.L ? 'opacity:.55' : ''}"><span class="n">Level ${r.L}</span><span style="flex:1">${r.title}</span><span class="dim">${r.at.toLocaleString()} XP</span></div>`).join('')}</div></div></div>`);
+  on('back', home); on('back2', home);
 }
 
 // ---------- streaks ----------
@@ -995,8 +1087,12 @@ function runSet(getSet = 0) {
       <div id="tipBox">${tipHtml(tipA)}</div></div>
       <div style="flex:1"><div id="tempo" style="height:440px;width:170px"><i id="tb"></i></div><div id="tempoLbl" style="font-size:40px">—</div></div></div>
       <button class="stop mt" id="done" style="width:100%;font-size:48px;min-height:150px">${getSet ? 'START NOW' : 'DONE'}</button><div class="heard center"></div>`,
-    getSet ? { ready: goEarly } : { done: finishSet });
+    getSet ? { ready: goEarly } : { done: saidDone });
   on('done', () => CUR.start ? finishSet() : goEarly());
+  function saidDone() { if (Date.now() < (V.calloutUntil || 0)) return vlog('done', 'ignored: right after a pace callout'); finishSet(); }
+  // pace callouts like a trainer: reps 1–3 and 7–8, never on a push set, and only when each move is long enough to say
+  const coOn = setting('Voice Pacing', 'On') !== 'Off' && !CUR.push && plan.seq.filter(p => p.kind !== 'HOLD').every(p => p.t >= 0.8);
+  const coReps = new Set([0, 1, 2, 6, 7]);
   let beeped = false, lastKind = '', lastCount = getSet, tipB = false;
   const startPos = plan.seq[0].from;               // where a rep begins (bottom for up-first, top for down-first)
   function goEarly() {
@@ -1011,7 +1107,7 @@ function runSet(getSet = 0) {
     const c = document.getElementById('clock'); if (c) c.style.color = '';
     const l = document.getElementById('clockLbl'); if (l) l.textContent = 'seconds · target ' + ex.target + 's';
     const btn = document.getElementById('done'); if (btn) btn.textContent = 'DONE';
-    V.handlers = { done: finishSet }; V.utt = []; V.screenAt = Date.now(); annotate();
+    V.handlers = { done: saidDone }; V.utt = []; V.screenAt = Date.now(); annotate();
   }
   clearInterval(setTimer);
   if (!getSet) begin();
@@ -1035,7 +1131,10 @@ function runSet(getSet = 0) {
     const bar = document.getElementById('tb');
     bar.style.height = (8 + pos * 92) + '%'; bar.style.background = colors[kind] || '#6b7280';
     const lbl = document.getElementById('tempoLbl');
-    if (kind !== lastKind) { lbl.textContent = kind; lbl.style.color = colors[kind] || 'var(--dim)'; lastKind = kind; }
+    if (kind !== lastKind) {
+      lbl.textContent = kind; lbl.style.color = colors[kind] || 'var(--dim)'; lastKind = kind;
+      if (coOn && t >= 0 && (kind === 'UP' || kind === 'DOWN') && coReps.has(Math.floor(t / P))) callout(kind === 'UP' ? 'Up!' : 'Down!');
+    }
   }, 40);
   function phaseAt(t) {
     let ph = plan.seq[0];
@@ -1115,6 +1214,7 @@ function tempoScreen() {
 // Save the set (both sides for one-side exercises), then rest
 function commit(tempoFit) {
   const d = new Date(), ex = CUR.ex;
+  const lvBefore = levelFor(xpTotal()); CUR.xpGain = 0; CUR.levelUp = null;
   SESSION.countBy[CUR.name] = (SESSION.countBy[CUR.name] || 0) + 1;
   const setNo = SESSION.countBy[CUR.name];
   const order = CUR.sides.slice().sort((a, b) => (a.side === 'Right' ? -1 : 1) - (b.side === 'Right' ? -1 : 1));
@@ -1125,6 +1225,8 @@ function commit(tempoFit) {
   SESSION.lastEx = CUR.name; SESSION.lastAt = Date.now();
   // personal record: heavier than ever, or more reps than ever at this weight
   checkPR(reps);
+  xpAfterSet(lvBefore);
+  SESSION.xp = (SESSION.xp || 0) + (CUR.xpGain || 0);
   // mid-session tweak only when a set is wildly off; "felt off" holds the weight
   let tweak = null;
   if (!CUR.off && CUR.weight != null) {
@@ -1171,14 +1273,16 @@ function rest(tweak) {
     const banner = `<div style="font-size:${push ? 64 : 58}px;font-weight:800;line-height:1.05;margin:2px 0 8px;color:${push ? '#e7b6ff' : 'var(--acc)'}">${push ? '🔥 ' : ''}SET ${k}${k <= 3 ? ` <span style="font-size:.55em;color:var(--dim)">of 3</span>` : ''}${push ? ' <span style="font-size:.5em">· PUSH SET</span>' : ''}</div>`;
     nextHtml = `${banner}<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big" id="nw">${fmtW(w)}</div><div id="nchg">${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}</div><div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>${tipHtml(nextTip(p.ex))}`;
   }
-  screen(`<div class="row"><div class="card center" style="flex:0 0 300px"><h3>Rest</h3><div class="huge" id="rc">${secs}</div></div><div class="card">${nextHtml}</div></div>
+  const xpLine = CUR.levelUp ? `<div style="font-size:30px;font-weight:800;color:#ffd166;margin-top:6px">⭐ LEVEL ${CUR.levelUp.L}!<br><span style="font-size:22px">${esc(CUR.levelUp.title)}</span></div>` : CUR.xpGain ? `<div style="font-size:28px;font-weight:700;color:#ffd166;margin-top:6px">+${CUR.xpGain} XP</div>` : '';
+  screen(`<div class="row"><div class="card center" style="flex:0 0 300px"><h3>Rest</h3><div class="huge" id="rc">${secs}</div>${xpLine}</div><div class="card">${nextHtml}</div></div>
     ${tweak && p && p.ex.name === CUR.name ? `<div class="card"><b>${tweak.msg} ${fmtW(tweak.w)}?</b><div class="row mt"><button class="sm go" id="ty">Yes, change it</button><button class="sm" id="tn">Keep ${fmtW(CUR.weight)}</button></div></div>` : ''}
     <div class="row"><button class="go" id="go">Ready</button><button id="skip" data-say="skip">Skip that</button><button class="stop" id="end">End session</button></div><div class="heard center"></div>`,
     { ready: goNext, skip: () => nextName && skipFlow(nextName), end: endFlow, next: goNext });
   if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
   on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
   clearInterval(restTimer);
-  if (nextSay) speak(`Rest. ${nextSay} next.`);
+  if (CUR.levelUp) speak(`Level up! Level ${CUR.levelUp.L}, ${CUR.levelUp.title}. ${nextSay ? nextSay + ' next.' : ''}`);
+  else if (nextSay) speak(`Rest. ${nextSay} next.`);
   let rung = false;
   restTimer = setInterval(() => {
     const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
@@ -1290,6 +1394,7 @@ function summary() {
   speak(`Nice work. ${s.log.length} ${s.log.length === 1 ? 'set' : 'sets'} complete.${s.prs.length ? ' And a new record.' : ''}`);
   screen(`<h1>Nice work 💪</h1>
     <div class="row"><div class="card center"><div class="big">${s.log.length}</div><div class="dim">sets</div></div><div class="card center"><div class="big">${mins}</div><div class="dim">minutes</div></div><div class="card center"><div class="big">${Math.round(work / 60)}</div><div class="dim">min of muscle work</div></div></div>
+    ${s.xp ? (() => { const lv = levelFor(xpTotal()); return `<div class="card" style="display:flex;align-items:center;gap:20px"><div style="font-size:40px;font-weight:800;color:#ffd166">+${s.xp} XP</div><div style="flex:1"><b>Level ${lv.L} · ${esc(lv.title)}</b>${levelBar(lv)}<div class="dim">${lv.need - lv.into} XP to level ${lv.L + 1}</div></div></div>`; })() : ''}
     ${s.prs.length ? `<div class="card"><h3>Records</h3>${s.prs.map(p => `<div>🏆 ${esc(p)}</div>`).join('')}</div>` : ''}
     <div class="card">${Object.entries(byEx).map(([k, v]) => `<div class="exrow"><span class="n">${esc(k)}</span><span>${v.map(l => `${l.weight == null ? '' : +l.weight.toFixed(1) + '×'}${l.reps}`).join(' · ')}</span></div>`).join('')}</div>
     <div class="card"><b>This week: ${n.totD} of ${n.totQ} sets</b> · <span class="${n.pace.cls}">${n.pace.text}</span></div>
