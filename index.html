@@ -562,7 +562,7 @@ function home() {
     <button class="getgo" id="go" data-say="started">${alive ? 'Keep Going! 💪' : 'Get Started! 💪'}</button>
     <div class="tiles">
       <div class="tile"><b>🔥 ${st.n}</b><span>${streakText}<br>${streakSub}${st.last ? '<br>Last workout ' + (st.sinceLast === 0 ? 'today' : st.sinceLast === 1 ? 'yesterday' : st.sinceLast + ' days ago') : ''}</span></div>
-      <div class="tile"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}</span></div>
+      <div class="tile" id="prTile" style="cursor:pointer"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}<br>Tap to see them ›</span></div>
     </div>
     <div class="row"><button class="sm" id="pickx">Pick exercise</button><button class="sm" id="hurt">Flag a hurt joint</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button><button class="sm" id="pickv" data-say="-">Choose voice</button></div>
     <div class="heard center"></div>`,
@@ -572,10 +572,29 @@ function home() {
   on('go', go);
   on('pickx', pickExercise);
   document.getElementById('heroWk').onclick = weekView;
+  document.getElementById('prTile').onclick = recordsView;
   on('hurt', () => jointPicker(j => { event('joint_flag', '', j, 'flagged from home'); toast(`${j} flagged`); home(); }));
   on('refresh', async () => { await loadState(); home(); });
   on('talk', () => { LS.set('talk', !LS.get('talk', true)); home(); });
   on('pickv', voicePicker);
+}
+
+// ---------- records ----------
+function recordsView() {
+  const prs = ((S && S.progress) || []).filter(r => r['Type'] === 'PR').slice().reverse();
+  const sets = allSets().filter(s => s.reps != null && s.weight != null);
+  const bests = exercises().filter(e => e.type !== 'Core').map(e => {
+    const mine = sets.filter(s => s.ex === e.name); if (!mine.length) return null;
+    const top = mine.reduce((m, s) => Math.max(m, s.weight), 0);
+    const atTop = mine.filter(s => s.weight === top).sort((a, b) => b.reps - a.reps)[0];
+    return { name: e.name, top, reps: atTop.reps, when: atTop.t };
+  }).filter(Boolean);
+  const fmtD = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  screen(`<h2>🏆 Personal records</h2>
+    <div class="card"><h3>Records set in the app</h3>${prs.length ? prs.map(r => `<div class="exrow"><span class="n">${esc(r['Name'])}</span><span style="flex:1">${esc(r['Detail'])}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(parseDate(r['Date']))}</span></div>`).join('') : '<p class="dim">None yet. Beat your heaviest weight, or your most reps at a weight, to earn one.</p>'}</div>
+    <div class="card"><h3>All-time heaviest, from your full history</h3>${bests.map(b => `<div class="exrow"><span class="n">${esc(b.name)}</span><span style="flex:1">${+b.top.toFixed(1)} lb × ${b.reps}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(b.when)}</span></div>`).join('')}</div>
+    <button id="back" style="width:100%" data-say="back">Back</button>`);
+  on('back', home);
 }
 
 // ---------- up next: just the next exercise ----------
