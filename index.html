@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119145500';   // set automatically on each commit
+const APP_VERSION = '20261119150310';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1058,7 +1058,7 @@ function prep(name, opts = {}) {
   const weekNo = doneThisWeek(name, sets) + 1;
   const pushSet = setNo >= 3 || weekNo === ex.quota;
   CUR.push = pushSet; CUR.pushWhy = setNo >= 3 ? 'Last set' : `Set ${weekNo} of ${ex.quota} this week`;
-  speak(`${pushSet ? CUR.pushWhy + '. Push it. ' : ''}${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''}`);
+  // no spoken intro here: it ran into the countdown and callouts. The screen shows the exercise, weight and setup.
   screen(`<div class="side"><div class="card" style="margin:0"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3>${pushSet ? '<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:24px;margin:4px 0 8px">🔥 ' + CUR.pushWhy + ': push it. See how many you can get.</div>' : ''}<h1>${esc(name)}</h1>
      ${w.w == null ? `<div class="big">${fmtW(w.w)}</div>` : `<div style="display:flex;align-items:center;gap:18px"><button class="sm" id="wm" style="min-width:90px;font-size:44px">−</button><div class="big" id="wv">${fmtW(w.w)}</div><button class="sm" id="wp" style="min-width:90px;font-size:44px">+</button></div>`}
      <div id="pbBox">${pbHtml(w.w)}</div><div class="dim" id="wwhy">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
@@ -1137,6 +1137,7 @@ const tipHtml = t => t ? `<div class="tip" style="background:#16283a;border-left
 // Saying "go" early moves 0 to the end of the preview rep in progress (at least 1 s away), so it stays in sync.
 function startSet(short) { runSet(short ? 3 : setting('Get Set (s)', 5)); }
 function runSet(getSet = 0) {
+  try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch {}   // nothing left talking when the set starts
   const ex = CUR.ex, plan = repPlan(ex), P = plan.total;
   CUR.repSecs = P; CUR.start = null;
   let zero = Date.now() + getSet * 1000;          // when the set clock hits 0
