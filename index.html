@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119102313';   // set automatically on each commit
+const APP_VERSION = '20261119143152';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -345,7 +345,7 @@ function voiceStart(why) {
   };
   r.onend = () => {
     V.on = false; micUI();
-    if (V.restarting) return;              // our own restart after a prompt
+    if (V.restarting || V.paused) return;  // our own restart after a prompt, or paused while the set's pacing audio plays
     const ran = V.startedAt ? Date.now() - V.startedAt : 0; V.startedAt = 0;
     if (V.audioLost) {                     // lost the mic: get it back quickly, and don't count it as a failure
       V.audioLost = false; vlog('', `mic lost after ${Math.round(ran / 1000)}s, restarting`);
@@ -362,7 +362,10 @@ function voiceStart(why) {
   try { r.start(); } catch (err) { vlog('', 'start failed: ' + err.message); }
 }
 // if the mic quietly dropped, bring it back
-setInterval(() => { if (V.want && !V.on) voiceStart('watchdog'); }, 4000);
+setInterval(() => { if (V.want && !V.on && !V.paused) voiceStart('watchdog'); }, 4000);
+// While the beat and callouts play during a set, the iPad can't listen reliably, so the mic pauses and comes back after
+function micPause() { if (V.paused) return; V.paused = true; try { V.rec && V.rec.abort(); } catch {} V.on = false; const el = document.getElementById('mic'); if (el) { el.className = 'pill'; el.textContent = '🎙 pacing…'; } }
+function micResume(why) { if (!V.paused) return; V.paused = false; V.quickStops = 0; if (V.want) setTimeout(() => voiceStart(why || 'after pacing'), 250); else micUI(); }
 function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
 function micUI() {
   const el = document.getElementById('mic');
@@ -370,12 +373,12 @@ function micUI() {
   el.className = 'pill' + (V.on ? ' on' : ''); el.textContent = V.on ? '🎙 listening' : '🎙 off';
 }
 // Safari only lets the mic restart after a tap: any tap on the page brings it back if it dropped
-document.addEventListener('click', () => { if ((V.needTap || (V.want && !V.on)) && SR) { V.needTap = false; V.quickStops = 0; voiceStart('tap'); } }, true);
+document.addEventListener('click', () => { if (!V.paused && (V.needTap || (V.want && !V.on)) && SR) { V.needTap = false; V.quickStops = 0; voiceStart('tap'); } }, true);
 // right after a beep or spoken prompt, make sure the mic is still running
-function micCheckSoon() { setTimeout(() => { if (V.want && !V.on) voiceStart('after sound'); }, 600); }
+function micCheckSoon() { setTimeout(() => { if (V.want && !V.on && !V.paused) voiceStart('after sound'); }, 600); }
 // After the app speaks, iPadOS can silently cut the mic while it still looks on: restart it outright
 function micRestartAfterSpeech() {
-  if (!V.want || !V.rec) return;
+  if (!V.want || !V.rec || V.paused) return;
   V.restarting = true;
   try { V.rec.abort(); } catch {}
   setTimeout(() => { V.restarting = false; V.on = false; voiceStart('after prompt'); }, 350);
@@ -571,7 +574,7 @@ function event(type, exName = '', joint = '', reason = '', detail = '') {
 
 // ---------- screens ----------
 let CUR = null;   // the set in progress
-function screen(html, handlers) { if (NOTE) { $app.innerHTML = html; NOTE.saved = handlers || null; const t0 = $app.querySelector('h1,h2,h3'); NOTE.screen = t0 ? t0.textContent.slice(0, 40) : NOTE.screen; return; } V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; V.recent = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
+function screen(html, handlers) { if (V.paused && !(html || '').includes('id="clock"')) micResume('after set'); if (NOTE) { $app.innerHTML = html; NOTE.saved = handlers || null; const t0 = $app.querySelector('h1,h2,h3'); NOTE.screen = t0 ? t0.textContent.slice(0, 40) : NOTE.screen; return; } V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; V.recent = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
 function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
 
 function showSetup() {
@@ -997,7 +1000,9 @@ function prep(name, opts = {}) {
     return jointCheck(ex, js.joints);
   }
   if (js && js.sore.length && !opts.lighter) opts = Object.assign({}, opts, { lighter: true, soreNote: js.sore.join(', ') + ' sore' });
-  let w = (CUR && CUR.name === name && CUR.nextWeight !== undefined) ? { w: CUR.nextWeight, why: 'adjusted' } : weightFor(ex, sets);
+  SESSION.wOverride = SESSION.wOverride || {};
+  let w = (CUR && CUR.name === name && CUR.nextWeight !== undefined) ? { w: CUR.nextWeight, why: 'adjusted' }
+    : SESSION.wOverride[name] != null ? { w: SESSION.wOverride[name], why: 'your choice this session' } : weightFor(ex, sets);
   if (opts.lighter && w.w != null) w = { w: Math.max(step(w.w), w.w - step(w.w)), why: opts.soreNote ? 'lighter first set: ' + opts.soreNote : 'lighter return set' };
   const setNo = (SESSION.countBy[name] || 0) + 1;
   // one-side: right first, sometimes left first (decided once per sitting)
@@ -1022,7 +1027,8 @@ function prep(name, opts = {}) {
   CUR.push = pushSet; CUR.pushWhy = setNo >= 3 ? 'Last set' : `Set ${weekNo} of ${ex.quota} this week`;
   speak(`${pushSet ? CUR.pushWhy + '. Push it. ' : ''}${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''}`);
   screen(`<div class="side"><div class="card" style="margin:0"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3>${pushSet ? '<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:24px;margin:4px 0 8px">🔥 ' + CUR.pushWhy + ': push it. See how many you can get.</div>' : ''}<h1>${esc(name)}</h1>
-     <div class="big">${fmtW(w.w)}</div><div class="dim">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
+     ${w.w == null ? `<div class="big">${fmtW(w.w)}</div>` : `<div style="display:flex;align-items:center;gap:18px"><button class="sm" id="wm" style="min-width:90px;font-size:44px">−</button><div class="big" id="wv">${fmtW(w.w)}</div><button class="sm" id="wp" style="min-width:90px;font-size:44px">+</button></div>`}
+     <div id="pbBox">${pbHtml(w.w)}</div><div class="dim" id="wwhy">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
      ${changes.length ? `<div class="change">${changes.map(esc).join(' · ')}</div>` : ''}
      <div class="setup mt">${esc(ex.setup)}</div><div class="cue">${esc(ex.cue)}</div>
      ${note ? `<div class="cue">Trainer: ${esc(note)}</div>` : ''}
@@ -1032,6 +1038,16 @@ function prep(name, opts = {}) {
      <div class="heard center"></div>`,
     { ready: () => startSet(), skip: () => skipFlow(name), end: endFlow });
   on('go', () => startSet()); on('skip', () => skipFlow(name)); on('other', pickExercise); on('end', endFlow);
+  const bump = dir => {
+    const cur = CUR.weight, st = step(cur);
+    const nw = Math.max(st, +(cur + dir * st).toFixed(1));
+    CUR.weight = nw; SESSION.wOverride[name] = nw; saveSession();
+    document.getElementById('wv').textContent = fmtW(nw);
+    document.getElementById('pbBox').innerHTML = pbHtml(nw);
+    document.getElementById('wwhy').textContent = 'your choice this session';
+    clearTimeout(CUR.wLogT); CUR.wLogT = setTimeout(() => event('weight_change', name, '', 'set by Josh', `${fmtW(w.w)} → ${fmtW(nw)} for this session`), 4000);
+  };
+  on('wm', () => bump(-1)); on('wp', () => bump(1));
 }
 
 function jointCheck(ex, joints) {
@@ -1058,6 +1074,22 @@ function repPlan(ex) {
   return { seq, total: seq.reduce((a, p) => a + p.t, 0) };
 }
 let setTimer = null;
+// PowerBlock Pro 50 setup: pin bands add 5 lb from 10 (handle + both chrome adders); each chrome adder is 2.5 lb
+const PB_BANDS = { 15: 'white-outline', 20: 'white', 25: 'orange', 30: 'green', 35: 'yellow', 40: 'blue', 45: 'red', 50: 'gray' };
+const PB_DOT = { 'white-outline': 'background:transparent;border:3px solid #fff', white: 'background:#fff', orange: 'background:#f08a3c', green: 'background:#3ecf6e', yellow: 'background:#f5d33d', blue: 'background:#3d8bf5', red: 'background:#e5484d', gray: 'background:#9aa0a6' };
+function pbSetup(w) {
+  if (w == null || setting('Dumbbells', 'PowerBlock Pro 50') !== 'PowerBlock Pro 50') return null;
+  const r = Math.round(w * 2) / 2;
+  if (r < 5 || r > 50) return null;
+  let pin = Math.ceil(r / 5) * 5, out = Math.round((pin - r) / 2.5);   // weights ending in 2.5 drop one chrome adder
+  if (r % 2.5) return null;                                            // not reachable on the PowerBlock
+  if (pin < 10) { pin = 10; out = Math.round((10 - r) / 2.5); }
+  const band = pin === 10 ? 'handle' : PB_BANDS[pin];
+  const chrome = out === 0 ? 'both chrome weights in' : out === 1 ? 'take out 1 chrome weight' : 'take out both chrome weights';
+  return { band, text: `${pin === 10 ? 'Pin: handle only (no band)' : `Pin: ${band.replace('-', ' ')} band (${pin})`} · ${chrome}` };
+}
+const pbHtml = w => { const p = pbSetup(w); return p ? `<div class="pb" style="font-size:26px;margin-top:6px">${p.band !== 'handle' ? `<span style="display:inline-block;width:26px;height:26px;border-radius:6px;vertical-align:-4px;margin-right:8px;${PB_DOT[p.band]}"></span>` : ''}${esc(p.text)}</div>` : ''; };
+
 // Form tips: one at a time, rotating so each set shows a different reminder
 function nextTip(ex) {
   if (!ex || !ex.tips || !ex.tips.length) return '';
@@ -1097,12 +1129,15 @@ function runSet(getSet = 0) {
   const coOn = setting('Voice Pacing', 'On') !== 'Off' && plan.seq.filter(p => p.kind !== 'HOLD').every(p => p.t >= 0.8);
   const tickOn = setting('Metronome', 'On') !== 'Off';
   const coReps = new Set([0, 1, 2, 6, 7]);
-  let paceUntil = Infinity, pushCalled = false;
+  // pacing runs to about rep 10 (or close to the target time), then goes quiet so the mic can hear "done"
+  let paceUntil = Math.max(10 * P, ex.target - 8), pushCalled = false;
+  const paceOn = coOn || tickOn;
   if (CUR.push) {
     const mine = allSets().filter(x => x.ex === CUR.name && x.dur && (!ex.oneSide || x.side === CUR.side)).sort((a, b) => b.t - a.t);
     const prior = mine.find(x => x.session === SESSION.id) || mine[0];
-    paceUntil = 0.5 * ((prior && prior.dur) || ex.target);
+    paceUntil = Math.min(paceUntil, 0.5 * ((prior && prior.dur) || ex.target));
   }
+  let resumed = false;
   let beeped = false, lastKind = '', lastCount = getSet, tipB = false;
   function goEarly() {
     if (CUR.start) return;
@@ -1114,6 +1149,7 @@ function runSet(getSet = 0) {
   }
   function begin() {
     CUR.start = zero; beep(1046, 220);
+    if (paceOn) micPause();
     const c = document.getElementById('clock'); if (c) c.style.color = '';
     const l = document.getElementById('clockLbl'); if (l) l.textContent = 'seconds · target ' + ex.target + 's';
     const btn = document.getElementById('done'); if (btn) btn.textContent = 'DONE';
@@ -1135,6 +1171,7 @@ function runSet(getSet = 0) {
       document.getElementById('reps').textContent = Math.floor(t / P);
       const ph = phaseAt(t % P); pos = ph.pos; kind = ph.kind;
       if (!beeped && t >= ex.target) { beeped = true; beep(1046, 250); c.classList.add('ok'); }
+      if (!resumed && paceOn && t >= paceUntil + (CUR.push ? 2.5 : 0.3)) { resumed = true; micResume('after pacing'); const l = document.getElementById('clockLbl'); if (l) l.textContent = 'say “done” when you finish'; }
       if (!tipB && t >= 15 && ex.tips && ex.tips.length > 1) { tipB = true; const tb = document.getElementById('tipBox'); if (tb) tb.innerHTML = tipHtml(nextTip(ex)); }
     }
     const bar = document.getElementById('tb');
@@ -1142,10 +1179,10 @@ function runSet(getSet = 0) {
     const lbl = document.getElementById('tempoLbl');
     if (kind !== lastKind) {
       lbl.textContent = kind; lbl.style.color = colors[kind] || 'var(--dim)'; lastKind = kind;
-      if (!pushCalled && t >= paceUntil) { pushCalled = true; callout('Push yourself and max this set!'); }
+      if (!pushCalled && CUR.push && paceOn && t >= paceUntil) { pushCalled = true; callout('Push yourself and max this set!'); }
       if ((kind === 'UP' || kind === 'DOWN') && t < paceUntil) {
         if (coOn && t >= 0 && coReps.has(Math.floor(t / P))) callout(kind === 'UP' ? 'Up!' : 'Down!');
-        else if (tickOn) tick(kind === 'UP', t < 0);       // softer during the get-set preview
+        else if (tickOn && t >= 0) tick(kind === 'UP');     // no ticks in the countdown, so "go" can still be heard
       }
     }
   }, 40);
@@ -1177,8 +1214,8 @@ function repsScreen() {
     { number: n => ask(n), yes: () => save(), no: () => unask() });
   on('m', () => { reps = Math.max(0, reps - 1); draw(); }); on('p', () => { reps++; draw(); }); on('ok', save);
   on('cy', save); on('cn', unask);
-  function ask(n) { reps = n; draw(); const c = document.getElementById('confirm'); document.getElementById('cv').textContent = n; c.style.display = 'flex'; speak(String(n) + '?'); }
-  function unask() { const c = document.getElementById('confirm'); if (c) c.style.display = 'none'; speak('How many?'); }
+  function ask(n) { reps = n; draw(); const c = document.getElementById('confirm'); document.getElementById('cv').textContent = n; c.style.display = 'flex'; }   // no speech here: talking restarts the mic right when you answer
+  function unask() { const c = document.getElementById('confirm'); if (c) c.style.display = 'none'; }
   let saved = false;
   function save() {
     if (saved) return; saved = true;
@@ -1276,7 +1313,7 @@ function rest(tweak) {
   if (p) {
     nextName = p.ex.name;
     const same = p.ex.name === CUR.name;
-    const w = same ? CUR.weight : weightFor(p.ex, n.sets).w;
+    const w = same ? CUR.weight : (SESSION.wOverride && SESSION.wOverride[p.ex.name] != null ? SESSION.wOverride[p.ex.name] : weightFor(p.ex, n.sets).w);
     const chg = [];
     if (!same && p.ex.equip !== CUR.ex.equip) chg.push(p.ex.equip);
     if (w !== CUR.weight && w != null) chg.push(`${fmtW(w)} dumbbell${p.ex.oneSide ? '' : 's'}`);
@@ -1284,14 +1321,14 @@ function rest(tweak) {
     const push = k >= 3 || doneThisWeek(p.ex.name, n.sets) + 1 === p.ex.quota;
     nextSay = `Set ${k}${k <= 3 ? ' of 3' : ''}${push ? ', push set' : ''}`;
     const banner = `<div style="font-size:${push ? 64 : 58}px;font-weight:800;line-height:1.05;margin:2px 0 8px;color:${push ? '#e7b6ff' : 'var(--acc)'}">${push ? '🔥 ' : ''}SET ${k}${k <= 3 ? ` <span style="font-size:.55em;color:var(--dim)">of 3</span>` : ''}${push ? ' <span style="font-size:.5em">· PUSH SET</span>' : ''}</div>`;
-    nextHtml = `${banner}<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big" id="nw">${fmtW(w)}</div><div id="nchg">${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}</div><div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>${tipHtml(nextTip(p.ex))}`;
+    nextHtml = `${banner}<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big" id="nw">${fmtW(w)}</div><div id="npb">${pbHtml(w)}</div><div id="nchg">${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}</div><div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>${tipHtml(nextTip(p.ex))}`;
   }
   const xpLine = CUR.levelUp ? `<div style="font-size:30px;font-weight:800;color:#ffd166;margin-top:6px">⭐ LEVEL ${CUR.levelUp.L}!<br><span style="font-size:22px">${esc(CUR.levelUp.title)}</span></div>` : CUR.xpGain ? `<div style="font-size:28px;font-weight:700;color:#ffd166;margin-top:6px">+${CUR.xpGain} XP</div>` : '';
   screen(`<div class="row"><div class="card center" style="flex:0 0 300px"><h3>Rest</h3><div class="huge" id="rc">${secs}</div>${xpLine}</div><div class="card">${nextHtml}</div></div>
     ${tweak && p && p.ex.name === CUR.name ? `<div class="card"><b>${tweak.msg} ${fmtW(tweak.w)}?</b><div class="row mt"><button class="sm go" id="ty">Yes, change it</button><button class="sm" id="tn">Keep ${fmtW(CUR.weight)}</button></div></div>` : ''}
     <div class="row"><button class="go" id="go">Ready</button><button id="skip" data-say="skip">Skip that</button><button class="stop" id="end">End session</button></div><div class="heard center"></div>`,
     { ready: goNext, skip: () => nextName && skipFlow(nextName), end: endFlow, next: goNext });
-  if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
+  if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const npb = document.getElementById('npb'); if (npb) npb.innerHTML = pbHtml(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
   on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
   clearInterval(restTimer);
   if (CUR.levelUp) speak(`Level up! Level ${CUR.levelUp.L}, ${CUR.levelUp.title}. ${nextSay ? nextSay + ' next.' : ''}`);
