@@ -53,7 +53,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118203116';   // set automatically on each commit
+const APP_VERSION = '20261118203239';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -191,7 +191,7 @@ function weightFor(ex, sets) {
   // plan is newer than my last set → use it
   const planAt = p && parseDate(p['Updated At']);
   if (pw != null && (!last || !planAt || planAt >= last.t)) return { w: pw, why: 'plan' };
-  if (!last) return pw != null ? { w: pw, why: 'plan' } : { w: null, why: 'none' };
+  if (!last) return pw != null ? { w: pw, why: 'plan' } : { w: null, why: 'no history yet' };
   const days = (Date.now() - last.t) / DAY;
   if (days > 21) {
     const cut = Math.min(0.2, 0.1 * Math.floor(days / 21));
