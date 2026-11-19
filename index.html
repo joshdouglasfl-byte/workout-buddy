@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119154138';   // set automatically on each commit
+const APP_VERSION = '20261119154735';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -389,7 +389,17 @@ function micResume(why) {
   clearTimeout(V.coT); V.speaking = false;
   vlog('', `pacing done: callouts spoken ${V.coSpoken || 0} of ${V.coAsked || 0}, speech ${tts}, sound engine ${st}`);
   V.coSpoken = 0; V.coAsked = 0;
-  if (V.want) setTimeout(() => voiceStart(why || 'after pacing'), 700); else micUI();
+  if (!V.want) { micUI(); return; }
+  // Sets with spoken callouts always heard "done"; sets with only beeps came back deaf. A short silent utterance
+  // resets the iPad's audio mode the same way a callout does, then the mic starts.
+  let started = false;
+  const go = how => { if (started) return; started = true; clearTimeout(V.rsT); vlog('', 'audio reset: ' + how); setTimeout(() => voiceStart(why || 'after pacing'), 300); };
+  try {
+    const u = new SpeechSynthesisUtterance('.'); u.volume = 0; u.rate = 2;
+    u.onend = () => go('speech ok'); u.onerror = () => go('speech error');
+    setTimeout(() => speechSynthesis.speak(u), 250);
+  } catch { go('no speech'); }
+  V.rsT = setTimeout(() => go('timeout'), 2000);
 }
 function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
 // Voice status square: live mic when listening, mic with a no-sign when off (red) or paused for the set's pacing (gray)
