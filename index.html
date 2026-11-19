@@ -53,7 +53,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118202214';   // set automatically on each commit
+const APP_VERSION = '20261118202753';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -298,6 +298,7 @@ function voiceStart(why) {
     if (now - V.lastWordAt > 900 && !revised) V.utt = [];   // a pause starts a new phrase
     V.utt = revised ? V.utt.slice(0, Math.max(0, V.utt.length - (oldLen - k))).concat(fresh) : V.utt.concat(fresh);
     V.lastWordAt = now;
+    V.recent = (V.recent || []).filter(r => now - r.t < 4000).concat(fresh.map(w => ({ w, t: now })));
     document.querySelectorAll('.heard').forEach(h => h.textContent = '“' + V.utt.join(' ') + '”');
     clearTimeout(V.timer);
     V.timer = setTimeout(() => decide(V.utt.slice()), 450);  // short wait to see if more words follow
@@ -370,11 +371,14 @@ function decide(utt) {
   const fire = (k, fn) => { V.utt = []; if (V.speaking) try { speechSynthesis.cancel(); } catch {} vlog(heard, 'did: ' + k); fn(); };
   for (const k of Object.keys(SAY)) if (h[k] && SAY[k].test(phrase)) return fire(k, h[k]);
   if (uniq.length <= 3) for (const w of uniq) for (const k of Object.keys(WORD)) if (h[k] && WORD[k].test(w)) return fire(k, h[k]);
-  // a button's underlined word (or words)
-  if (uniq.length <= 3) {
-    const hitKey = Object.keys(SAYMAP).find(k => k.includes(' ') ? phrase.includes(k) : uniq.includes(k));
-    if (hitKey) { const b = SAYMAP[hitKey]; V.utt = []; vlog(heard, 'pressed: ' + hitKey); if (V.speaking) try { speechSynthesis.cancel(); } catch {} b.click(); return; }
-  }
+  // a button's phrase ("get started"), matched across your last few seconds so a split phrase still counts
+  const press = k => { const b = SAYMAP[k]; V.utt = []; V.recent = []; vlog(heard, 'pressed: ' + k); if (V.speaking) try { speechSynthesis.cancel(); } catch {} b.click(); };
+  const win = ' ' + (V.recent || []).map(r => r.w).join(' ') + ' ', said = ' ' + toks.join(' ') + ' ';
+  const phrases = Object.keys(SAYMAP).filter(k => k.includes(' ')).sort((a, b) => b.length - a.length);
+  const ph = phrases.find(k => said.includes(' ' + k + ' ')) || phrases.find(k => win.includes(' ' + k + ' '));
+  if (ph) return press(ph);
+  // or its one-word shortcut ("started")
+  if (uniq.length <= 3) { const k = Object.keys(SAYMAP).find(x => !x.includes(' ') && uniq.includes(x)); if (k) return press(k); }
   if (h.number) {
     for (let i = toks.length - 1; i >= 0; i--) {
       const w = toks[i]; const n = /^\d+$/.test(w) ? +w : NUMW[w];
@@ -391,18 +395,24 @@ function annotate() {
   SAYMAP = {};
   $app.querySelectorAll('button').forEach(b => {
     if (b.dataset.say === '-') return;
-    let say = (b.dataset.say || '').toLowerCase();
     const textNode = [...b.childNodes].find(n => n.nodeType === 3 && /[a-z]/i.test(n.textContent));
-    if (!say && textNode) say = (textNode.textContent.toLowerCase().match(/[a-z']+/g) || []).find(w => !SAY_STOP.has(w) && w.length > 1) || '';
-    if (!say || SAYMAP[say]) return;            // skip duplicates on the same screen
-    SAYMAP[say] = b;
-    if (textNode) {
-      const i = textNode.textContent.toLowerCase().indexOf(say);
+    const ds = (b.dataset.say || '').toLowerCase().trim();
+    const words = textNode ? (textNode.textContent.toLowerCase().match(/[a-z']+/g) || []) : [];
+    // the natural phrase to say: a multi-word data-say, else the button's own words (up to 4, else the first 3)
+    const phrase = ds.includes(' ') ? ds : (words.length && words.length <= 4 ? words.join(' ') : words.slice(0, 3).join(' '));
+    // a one-word shortcut: a single-word data-say, else the first meaningful word
+    const key = ds && !ds.includes(' ') ? ds : (ds.includes(' ') ? '' : (words.find(w => !SAY_STOP.has(w) && w.length > 1) || ''));
+    if (phrase && phrase.includes(' ') && !SAYMAP[phrase]) SAYMAP[phrase] = b;
+    if (key && !SAYMAP[key]) SAYMAP[key] = b;
+    let show = phrase && phrase.includes(' ') ? phrase : key;
+    if (textNode && show && textNode.textContent.toLowerCase().indexOf(show) < 0) show = key;   // e.g. "Keep 30 lb": underline just "Keep"
+    if (textNode && show) {
+      const t = textNode.textContent, i = t.toLowerCase().indexOf(show);
       if (i >= 0) {
-        const t = textNode.textContent, span = document.createElement('span');
-        span.className = 'say'; span.textContent = t.slice(i, i + say.length);
+        const span = document.createElement('span');
+        span.className = 'say'; span.textContent = t.slice(i, i + show.length);
         const frag = document.createDocumentFragment();
-        frag.append(t.slice(0, i), span, t.slice(i + say.length));
+        frag.append(t.slice(0, i), span, t.slice(i + show.length));
         textNode.replaceWith(frag);
       }
     }
@@ -499,7 +509,7 @@ function event(type, exName = '', joint = '', reason = '', detail = '') {
 
 // ---------- screens ----------
 let CUR = null;   // the set in progress
-function screen(html, handlers) { if (NOTE) { $app.innerHTML = html; NOTE.saved = handlers || null; const t0 = $app.querySelector('h1,h2,h3'); NOTE.screen = t0 ? t0.textContent.slice(0, 40) : NOTE.screen; return; } V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
+function screen(html, handlers) { if (NOTE) { $app.innerHTML = html; NOTE.saved = handlers || null; const t0 = $app.querySelector('h1,h2,h3'); NOTE.screen = t0 ? t0.textContent.slice(0, 40) : NOTE.screen; return; } V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; V.recent = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; annotate(); }
 function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
 
 function showSetup() {
@@ -572,12 +582,12 @@ function home() {
         <div style="font-size:26px">${pick1(CHEERS[mood])}</div>
         <div class="dim mt" style="font-size:18px">Tap for this week’s tracker and exercise details ›</div></div>
     </div>
-    <button class="getgo" id="go" data-say="started">${alive ? 'Keep Going! 💪' : 'Get Started! 💪'}</button>
+    <button class="getgo" id="go">${alive ? 'Keep Going! 💪' : 'Get Started! 💪'}</button>
     <div class="tiles">
       <div class="tile" id="stTile" style="cursor:pointer"><b>🔥 ${st.n} <span style="font-size:22px;font-weight:600">${streakText}</span></b><span>${streakSub}${st.last ? '<br>Last workout ' + (st.sinceLast === 0 ? 'today' : st.sinceLast === 1 ? 'yesterday' : st.sinceLast + ' days ago') : ''}</span></div>
       <div class="tile" id="prTile" style="cursor:pointer"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}<br>Tap to see them ›</span></div>
     </div>
-    <div class="row"><button class="sm" id="pickx">Pick exercise</button><button class="sm" id="hurt">Flag a hurt joint</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button><button class="sm" id="pickv" data-say="-">Choose voice</button></div>
+    <div class="row"><button class="sm" id="pickx">Pick exercise</button><button class="sm" id="hurt">Flag a hurt joint</button><button class="sm" id="refresh">Reload plan</button><button class="sm" id="talk">${LS.get('talk', true) ? 'Voice prompts on' : 'Voice prompts off'}</button><button class="sm" id="pickv">Choose voice</button></div>
     <div class="heard center"></div>`,
     { ready: go, next: go, yes: go });
   requestAnimationFrame(() => setTimeout(() => { const r = document.getElementById('ring'); if (r) r.style.strokeDashoffset = C * (1 - pct / 100); }, 80));
@@ -660,7 +670,7 @@ function voicePicker() {
   const good = vs.filter(v => voiceScore(v) >= 50);
   screen(`<h2>Choose the app's voice</h2>
     <div class="card dim" style="font-size:20px">iPadOS doesn't let web apps use the Premium or Enhanced voices you download, only the built-in ones below. “iPad default” lets iPadOS choose, which is worth a try.</div>
-    <div class="grid2"><button class="sm" data-v="system" data-say="-" style="text-align:left${LS.get('voice', '') === 'system' ? ';outline:4px solid var(--acc)' : ''}">iPad default<br><span class="dim" style="font-size:18px">let iPadOS choose</span></button>${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="-" style="text-align:left${LS.get('voice', '') !== 'system' && cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
+    <div class="grid2"><button class="sm" data-v="system" style="text-align:left${LS.get('voice', '') === 'system' ? ';outline:4px solid var(--acc)' : ''}">iPad default<br><span class="dim" style="font-size:18px">let iPadOS choose</span></button>${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="${esc(v.name.toLowerCase().split(' ')[0])}" style="text-align:left${LS.get('voice', '') !== 'system' && cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
     <button class="go mt" id="done" style="width:100%" data-say="done">Done</button>`);
   document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { LS.set('voice', b.dataset.v); const was = LS.get('talk', true); LS.set('talk', true); speak('Next up: squats, thirty pounds.'); LS.set('talk', was); voicePicker(); });
   on('done', home);
