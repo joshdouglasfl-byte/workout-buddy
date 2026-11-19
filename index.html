@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119155304';   // set automatically on each commit
+const APP_VERSION = '20261119160216';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -554,7 +554,13 @@ function speak(text) {
 }
 // Short trainer callouts during a set ("Down!" "Up!"). They don't restart the mic after each word, only once after a burst.
 function callout(word) {
-  if (!('speechSynthesis' in window) || !LS.get('talk', true)) return;
+  if (!LS.get('talk', true)) return;
+  const ck = CALLOUT_KEY[word];
+  if (ck && haveClips([ck])) {            // recorded/AI clip: plays through the sound engine (mic is paused during pacing)
+    V.coAsked = (V.coAsked || 0) + 1; V.coSpoken = (V.coSpoken || 0) + 1;
+    V.calloutUntil = Date.now() + 1500; playClips([ck]); return;
+  }
+  if (!('speechSynthesis' in window)) return;
   try {
     // the iPad's speech engine can get stuck; clear anything queued so a stale callout never blocks this one
     if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
@@ -569,9 +575,55 @@ function callout(word) {
     speechSynthesis.speak(u);
   } catch {}
 }
+
+// ---------- recorded / AI trainer voice (clip packs) ----------
+// voice/lines.json lists the lines; a pack is voice/<pack>/<key>.mp3. Clips play through the sound engine,
+// which can leave the mic deaf, so after clips the app does the same audio reset it does after pacing.
+const CLIPS = {}; let CLIP_LINES = null, CLIP_PACK_LOADED = '';
+const clipPack = () => LS.get('voicePack', 'device');
+const exKey = name => 'ex_' + String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+async function loadPack(force) {
+  const pack = clipPack();
+  if (pack === 'device' || !actx || (CLIP_PACK_LOADED === pack && !force)) return;
+  CLIP_PACK_LOADED = pack; Object.keys(CLIPS).forEach(k => delete CLIPS[k]);
+  try {
+    if (!CLIP_LINES) CLIP_LINES = (await (await fetch('voice/lines.json', { cache: 'no-cache' })).json()).lines;
+    await Promise.all(CLIP_LINES.map(async l => {
+      try { const r = await fetch(`voice/${pack}/${l.key}.mp3`, { cache: 'no-cache' }); if (!r.ok) return; CLIPS[l.key] = await actx.decodeAudioData(await r.arrayBuffer()); } catch {}
+    }));
+    vlog('', `voice pack ${pack}: ${Object.keys(CLIPS).length} of ${CLIP_LINES.length} clips`);
+  } catch (e) { vlog('', 'voice pack failed: ' + e.message); }
+}
+const haveClips = keys => clipPack() !== 'device' && keys.every(k => CLIPS[k]);
+// play clips back to back; resolves when done
+function playClips(keys, gap = 0.12) {
+  return new Promise(res => {
+    try {
+      audioOn();
+      let t = actx.currentTime + 0.05;
+      keys.forEach(k => { const src = actx.createBufferSource(); src.buffer = CLIPS[k]; src.connect(actx.destination); src.start(t); t += CLIPS[k].duration + gap; });
+      setTimeout(res, (t - actx.currentTime) * 1000 + 50);
+    } catch { res(); }
+  });
+}
+// after clips outside a set: suspend the sound engine, silent utterance, then listen again
+function resetThenListen() {
+  try { if (actx && actx.state === 'running') actx.suspend(); } catch {}
+  let done = false; const go = () => { if (done) return; done = true; V.speaking = false; micRestartAfterSpeech(); };
+  try { const u = new SpeechSynthesisUtterance('.'); u.volume = 0; u.rate = 2; u.onend = u.onerror = go; speechSynthesis.speak(u); } catch { go(); }
+  setTimeout(go, 1500);
+}
+// say: use the chosen clip pack when every clip is there, else the device voice
+function say(keys, text) {
+  keys = keys.filter(Boolean);
+  if (!haveClips(keys)) { speak(text); return; }
+  V.speaking = true; V.ttsWords = new Set((Array.isArray(text) ? text.join(' ') : text).toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
+  playClips(keys).then(resetThenListen);
+}
+const CALLOUT_KEY = { 'Down!': 'down', 'Up!': 'up', 'Push yourself and max this set!': 'push_max' };
 let actx = null;
 function unlockAudio() {
-  try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {}
+  try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); loadPack(); } catch {}
   // iPadOS only lets the page talk after speech has been started from a tap once: do it silently on the first tap
   try { if (!V.ttsUnlocked && 'speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); V.ttsUnlocked = true; micUI(); } } catch {}
 }
@@ -967,11 +1019,15 @@ function voicePicker() {
   const vs = voices().sort((a, b) => voiceScore(b) - voiceScore(a));
   const cur = bestVoice();
   const good = vs.filter(v => voiceScore(v) >= 50);
+  const pk = clipPack(), packBtn = (id, label, sub) => `<button class="sm" data-pack="${id}" style="text-align:left${pk === id ? ';outline:4px solid var(--acc)' : ''}">${label}<br><span class="dim" style="font-size:18px">${sub}</span></button>`;
   screen(`<h2>Choose the app's voice</h2>
+    <div class="card"><h3>Trainer voice</h3><div class="grid2">${packBtn('device', 'iPad voice', 'built-in speech, chosen below')}${packBtn('ai', 'AI coach', 'natural recorded clips')}${packBtn('josh', 'Josh', 'your own recordings')}</div>
+    <p class="dim" style="font-size:18px">Clips loaded: ${Object.keys(CLIPS).length}${pk === 'device' ? '' : ' (any line without a clip uses the iPad voice)'}</p></div>
     <div class="card dim" style="font-size:20px">iPadOS doesn't let web apps use the Premium or Enhanced voices you download, only the built-in ones below. “iPad default” lets iPadOS choose, which is worth a try.</div>
     <div class="grid2"><button class="sm" data-v="system" style="text-align:left${LS.get('voice', '') === 'system' ? ';outline:4px solid var(--acc)' : ''}">iPad default<br><span class="dim" style="font-size:18px">let iPadOS choose</span></button>${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="${esc(v.name.toLowerCase().split(' ')[0])}" style="text-align:left${LS.get('voice', '') !== 'system' && cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
     <button class="go mt" id="done" style="width:100%" data-say="done">Done</button>`);
   document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { LS.set('voice', b.dataset.v); const was = LS.get('talk', true); LS.set('talk', true); speak('Next up: squats, thirty pounds.'); LS.set('talk', was); voicePicker(); });
+  document.querySelectorAll('[data-pack]').forEach(b => b.onclick = async () => { LS.set('voicePack', b.dataset.pack); unlockAudio(); await loadPack(true); voicePicker(); if (b.dataset.pack !== 'device') say(['rest_up', 'set_2', 'ex_squats'], 'Rest is up. Set two of three. Squats.'); });
   on('done', settingsView);
 }
 function watchGate(next) {
@@ -1293,7 +1349,7 @@ function repsScreen() {
     CUR.sides.push({ side: CUR.side, reps, dur: CUR.dur });
     if (CUR.ex.oneSide && CUR.sides.length === 1) {
       CUR.side = CUR.first === 'Right' ? 'Left' : 'Right';
-      speak(`${CUR.side} side.`);
+      say(['side_' + CUR.side.toLowerCase()], `${CUR.side} side.`);
       screen(`<div class="center" style="padding-top:30px"><h3>No rest, switch sides</h3><h1>${CUR.side} side</h1><div class="big">${fmtW(CUR.weight)}</div>
         <button class="go mt" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button><div class="heard"></div></div>`, { ready: () => startSet(true) });
       on('go', () => startSet(true));
@@ -1381,7 +1437,7 @@ function rest(tweak) {
   const n = whatsNext({});
   const p = n.pick;
   let nextHtml = '<h2>That’s everything for now</h2>';
-  let nextName = null, nextSay = '';
+  let nextName = null, nextSay = '', nextKeys = [];
   if (p) {
     nextName = p.ex.name;
     const same = p.ex.name === CUR.name;
@@ -1392,6 +1448,7 @@ function rest(tweak) {
     const k = same ? (SESSION.countBy[CUR.name] || 0) + 1 : (SESSION.countBy[p.ex.name] || 0) + 1;
     const push = k >= 3 || doneThisWeek(p.ex.name, n.sets) + 1 === p.ex.quota;
     nextSay = `Set ${k}${k <= 3 ? ' of 3' : ''}${push ? ', push set' : ''}`;
+    nextKeys = [k <= 3 ? 'set_' + k : 'set_n', push ? 'push_set' : null, exKey(p.ex.name)];
     const banner = `<div style="font-size:${push ? 64 : 58}px;font-weight:800;line-height:1.05;margin:2px 0 8px;color:${push ? '#e7b6ff' : 'var(--acc)'}">${push ? '🔥 ' : ''}SET ${k}${k <= 3 ? ` <span style="font-size:.55em;color:var(--dim)">of 3</span>` : ''}${push ? ' <span style="font-size:.5em">· PUSH SET</span>' : ''}</div>`;
     nextHtml = `${banner}<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big" id="nw">${fmtW(w)}</div><div id="npb">${pbHtml(w)}</div><div id="nchg">${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}</div><div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>${tipHtml(nextTip(p.ex))}`;
   }
@@ -1403,13 +1460,13 @@ function rest(tweak) {
   if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const npb = document.getElementById('npb'); if (npb) npb.innerHTML = pbHtml(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
   on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
   clearInterval(restTimer);
-  if (CUR.levelUp) speak(`Level up! Level ${CUR.levelUp.L}, ${CUR.levelUp.title}.`);   // otherwise rest starts quietly
+  if (CUR.levelUp) say(['level_up'], `Level up! Level ${CUR.levelUp.L}, ${CUR.levelUp.title}.`);   // otherwise rest starts quietly
   let rung = false;
   restTimer = setInterval(() => {
     const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
     const el = document.getElementById('rc'); if (!el) return clearInterval(restTimer);
     el.textContent = left;
-    if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); speak(nextName ? `Rest is up. ${nextSay}. ${nextName}.` : 'Rest is up.'); }
+    if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); say(['rest_up'].concat(nextName ? nextKeys : []), nextName ? `Rest is up. ${nextSay}. ${nextName}.` : 'Rest is up.'); }
   }, 250);
   function goNext() { clearInterval(restTimer); if (!nextName) { event('session_end', '', '', 'Nothing left', `${SESSION.log.length} sets`); return watchEnd(summary); } if (nextName !== CUR.name) CUR.nextWeight = undefined; prep(nextName); }
 }
@@ -1512,7 +1569,8 @@ function summary() {
   const n = whatsNext();
   const byEx = {};
   s.log.forEach(l => { (byEx[l.ex] = byEx[l.ex] || []).push(l); });
-  speak(['Nice work!', `${s.log.length} ${s.log.length === 1 ? 'set' : 'sets'} complete.`].concat(s.prs.length ? ['And a new record!'] : []));
+  say(['nice_work', 'n_' + s.log.length, s.log.length === 1 ? 'set_complete' : 'sets_complete', s.prs.length ? 'new_record' : null],
+    ['Nice work!', `${s.log.length} ${s.log.length === 1 ? 'set' : 'sets'} complete.`].concat(s.prs.length ? ['And a new record!'] : []));
   screen(`<h1>Nice work 💪</h1>
     <div class="row"><div class="card center"><div class="big">${s.log.length}</div><div class="dim">sets</div></div><div class="card center"><div class="big">${mins}</div><div class="dim">minutes</div></div><div class="card center"><div class="big">${Math.round(work / 60)}</div><div class="dim">min of muscle work</div></div></div>
     ${s.xp ? (() => { const lv = levelFor(xpTotal()); return `<div class="card" style="display:flex;align-items:center;gap:20px"><div style="font-size:40px;font-weight:800;color:#ffd166">+${s.xp} XP</div><div style="flex:1"><b>Level ${lv.L} · ${esc(lv.title)}</b>${levelBar(lv)}<div class="dim">${lv.need - lv.into} XP to level ${lv.L + 1}</div></div></div>`; })() : ''}
