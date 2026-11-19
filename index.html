@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119160216';   // set automatically on each commit
+const APP_VERSION = '20261119161241';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1021,7 +1021,7 @@ function voicePicker() {
   const good = vs.filter(v => voiceScore(v) >= 50);
   const pk = clipPack(), packBtn = (id, label, sub) => `<button class="sm" data-pack="${id}" style="text-align:left${pk === id ? ';outline:4px solid var(--acc)' : ''}">${label}<br><span class="dim" style="font-size:18px">${sub}</span></button>`;
   screen(`<h2>Choose the app's voice</h2>
-    <div class="card"><h3>Trainer voice</h3><div class="grid2">${packBtn('device', 'iPad voice', 'built-in speech, chosen below')}${packBtn('ai', 'AI coach', 'natural recorded clips')}${packBtn('josh', 'Josh', 'your own recordings')}</div>
+    <div class="card"><h3>Trainer voice</h3><div class="grid2">${packBtn('device', 'iPad voice', 'built-in speech, chosen below')}${packBtn('ai', 'AI coach · Michael', 'natural AI voice')}${packBtn('bella', 'AI coach · Bella', 'natural AI voice')}${packBtn('josh', 'Josh', 'your own recordings')}</div>
     <p class="dim" style="font-size:18px">Clips loaded: ${Object.keys(CLIPS).length}${pk === 'device' ? '' : ' (any line without a clip uses the iPad voice)'}</p></div>
     <div class="card dim" style="font-size:20px">iPadOS doesn't let web apps use the Premium or Enhanced voices you download, only the built-in ones below. “iPad default” lets iPadOS choose, which is worth a try.</div>
     <div class="grid2"><button class="sm" data-v="system" style="text-align:left${LS.get('voice', '') === 'system' ? ';outline:4px solid var(--acc)' : ''}">iPad default<br><span class="dim" style="font-size:18px">let iPadOS choose</span></button>${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="${esc(v.name.toLowerCase().split(' ')[0])}" style="text-align:left${LS.get('voice', '') !== 'system' && cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
