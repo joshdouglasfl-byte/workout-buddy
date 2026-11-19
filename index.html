@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119155018';   // set automatically on each commit
+const APP_VERSION = '20261119155304';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -538,14 +538,18 @@ function speak(text) {
   if (!('speechSynthesis' in window) || !LS.get('talk', true)) return;
   try {
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text); u.rate = 1.0;
-    const bv = bestVoice(); if (bv) { u.voice = bv; u.lang = bv.lang; }
-    V.speaking = true; V.ttsWords = new Set(text.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
+    const parts = Array.isArray(text) ? text : [text], all = parts.join(' ');   // an array is spoken as separate sentences with a pause between
+    const bv = bestVoice();
+    V.speaking = true; V.ttsWords = new Set(all.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
     let ended = false;
     const fin = () => { if (ended) return; ended = true; clearTimeout(V.spkT); setTimeout(() => { V.speaking = false; }, 250); micRestartAfterSpeech(); };
-    u.onend = u.onerror = fin;
-    clearTimeout(V.spkT); V.spkT = setTimeout(fin, 1500 + text.length * 80);   // iPad sometimes never fires onend
-    speechSynthesis.speak(u);
+    clearTimeout(V.spkT); V.spkT = setTimeout(fin, 1500 + all.length * 80 + parts.length * 400);   // iPad sometimes never fires onend
+    parts.forEach((t, i) => {
+      const u = new SpeechSynthesisUtterance(t); u.rate = 1.0;
+      if (bv) { u.voice = bv; u.lang = bv.lang; }
+      if (i === parts.length - 1) u.onend = u.onerror = fin;
+      speechSynthesis.speak(u);
+    });
   } catch {}
 }
 // Short trainer callouts during a set ("Down!" "Up!"). They don't restart the mic after each word, only once after a burst.
@@ -1508,7 +1512,7 @@ function summary() {
   const n = whatsNext();
   const byEx = {};
   s.log.forEach(l => { (byEx[l.ex] = byEx[l.ex] || []).push(l); });
-  speak(`Nice work. ${s.log.length} ${s.log.length === 1 ? 'set' : 'sets'} complete.${s.prs.length ? ' And a new record.' : ''}`);
+  speak(['Nice work!', `${s.log.length} ${s.log.length === 1 ? 'set' : 'sets'} complete.`].concat(s.prs.length ? ['And a new record!'] : []));
   screen(`<h1>Nice work 💪</h1>
     <div class="row"><div class="card center"><div class="big">${s.log.length}</div><div class="dim">sets</div></div><div class="card center"><div class="big">${mins}</div><div class="dim">minutes</div></div><div class="card center"><div class="big">${Math.round(work / 60)}</div><div class="dim">min of muscle work</div></div></div>
     ${s.xp ? (() => { const lv = levelFor(xpTotal()); return `<div class="card" style="display:flex;align-items:center;gap:20px"><div style="font-size:40px;font-weight:800;color:#ffd166">+${s.xp} XP</div><div style="flex:1"><b>Level ${lv.L} · ${esc(lv.title)}</b>${levelBar(lv)}<div class="dim">${lv.need - lv.into} XP to level ${lv.L + 1}</div></div></div>`; })() : ''}
