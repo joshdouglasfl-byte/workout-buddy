@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118210412';   // set automatically on each commit
+const APP_VERSION = '20261118210853';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -206,7 +206,8 @@ function weightFor(ex, sets) {
     return { w, why: `layoff (${Math.round(days)} days)` };
   }
   const sess = mine.filter(s => s.session === last.session && s.weight === last.weight && s.reps != null);
-  const allTop = sess.length >= 3 && sess.every(s => s.reps >= ex.repMax && !s.off && s.rir !== '0');
+  const lastSet = sess[sess.length - 1];   // sets 1-2 are pacing sets; the last set is the all-out one
+  const allTop = sess.length >= 2 && lastSet.reps >= ex.repMax && !sess.some(s => s.off) && sess.every(s => s.reps >= ex.repMin);
   if (allTop) return { w: last.weight + step(last.weight), why: 'hit top of range' };
   return { w: last.weight, why: 'same as last time' };
 }
@@ -901,8 +902,9 @@ function prep(name, opts = {}) {
   SESSION.type = SESSION.type || ex.type; saveSession();
   const plan = planFor(name);
   const note = plan && plan['Trainer Note'];
-  speak(`${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''}`);
-  screen(`<div class="side"><div class="card" style="margin:0"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3><h1>${esc(name)}</h1>
+  const pushSet = setNo >= 3; CUR.push = pushSet;
+  speak(`${pushSet ? 'Last set. Push it. ' : ''}${name}. ${w.w == null ? '' : `${+w.w.toFixed(1)} pounds.`} ${ex.oneSide ? first + ' side first.' : ''}`);
+  screen(`<div class="side"><div class="card" style="margin:0"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3>${pushSet ? '<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:24px;margin:4px 0 8px">🔥 Last set: push it. See how many you can get.</div>' : ''}<h1>${esc(name)}</h1>
      <div class="big">${fmtW(w.w)}</div><div class="dim">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
      ${changes.length ? `<div class="change">${changes.map(esc).join(' · ')}</div>` : ''}
      <div class="setup mt">${esc(ex.setup)}</div><div class="cue">${esc(ex.cue)}</div>
@@ -960,7 +962,14 @@ function runSet() {
   const ex = CUR.ex, plan = repPlan(ex);
   CUR.start = Date.now(); CUR.repSecs = plan.total;
   const colors = { UP: 'var(--acc)', DOWN: '#f08a3c', HOLD: '#6b7280' };
-  screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3>
+  // last set: show the number to beat (your best last set at this weight)
+  let beat = '';
+  if (CUR.push) {
+    const prev = allSets().filter(x => x.ex === CUR.name && x.reps != null && x.weight === CUR.weight && x.session !== SESSION.id && (!ex.oneSide || x.side === CUR.side));
+    const best = prev.reduce((m, x) => Math.max(m, x.reps), 0);
+    beat = `<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:26px;margin:4px 0">🔥 Last set: push it${best ? ` · beat ${best}` : ''}</div>`;
+  }
+  screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3>${beat}
       <div class="huge" id="clock">0</div><div class="dim" style="font-size:26px">seconds · target ${ex.target}s</div>
       <div class="big mt" id="reps">0</div><div class="dim">reps at the guide's pace (${+plan.total.toFixed(1)}s each)</div></div>
       <div style="flex:1"><div id="tempo" style="height:440px;width:170px"><i id="tb"></i></div><div id="tempoLbl" style="font-size:40px">—</div></div></div>
