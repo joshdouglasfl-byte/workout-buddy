@@ -53,7 +53,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118201431';   // set automatically on each commit
+const APP_VERSION = '20261118202003';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -430,7 +430,7 @@ function speak(text) {
     const u = new SpeechSynthesisUtterance(text); u.rate = 1.0;
     const bv = bestVoice(); if (bv) { u.voice = bv; u.lang = bv.lang; }
     V.speaking = true; V.ttsWords = new Set(text.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
-    u.onend = u.onerror = () => { setTimeout(() => { V.speaking = false; }, 500); micRestartAfterSpeech(); };
+    u.onend = u.onerror = () => { setTimeout(() => { V.speaking = false; }, 250); micRestartAfterSpeech(); };
     speechSynthesis.speak(u);
   } catch {}
 }
@@ -792,7 +792,7 @@ function prep(name, opts = {}) {
 }
 
 function jointCheck(ex, joints) {
-  speak(`Your ${joints.join(' and ')} was flagged. Try ${ex.name} now?`);
+  speak(`Your ${joints.join(' and ')} was flagged. Check in before you lift.`);
   screen(`<div class="card"><h3>Joint check</h3><h1>${esc(ex.name)}</h1><p style="font-size:28px">Your <b class="warn">${joints.map(esc).join(', ')}</b> was flagged. Good to try this now?</p></div>
     <div class="row"><button class="go" id="y" data-say="try">Try it (lighter)</button><button id="n">Wait</button></div>
     <div class="mt"><button class="sm" id="clr" style="width:100%" data-say="clear">It’s fine now, clear the flag</button></div><div class="heard center"></div>`,
@@ -1036,7 +1036,7 @@ function watchEnd(next) {
 // No watch: let the trainer estimate the calories from your watch history and this session's length, or skip
 function noWatchCalories(next) {
   const mins = Math.max(1, Math.round((Date.now() - SESSION.start) / 60000));
-  speak('No watch today. Should your trainer estimate the calories?');
+  speak('No watch today.');
   screen(`<div class="center" style="padding-top:40px"><div style="font-size:100px">🧮</div><h1>No watch today</h1>
     <p class="dim" style="font-size:26px">${mins} minutes, ${SESSION.log.length} sets. Your trainer can estimate the calories from your past watch sessions and add them to Lose It!.</p>
     <div class="row mt" style="width:80%;margin-left:10%"><button class="go" id="est" data-say="estimate">Let trainer estimate</button><button id="skip" data-say="skip">Skip</button></div><div class="heard"></div></div>`, { yes: est });
@@ -1091,7 +1091,7 @@ function summary() {
   const n = whatsNext();
   const byEx = {};
   s.log.forEach(l => { (byEx[l.ex] = byEx[l.ex] || []).push(l); });
-  speak(`Nice work. ${s.log.length} sets done.${s.prs.length ? ' And a new record.' : ''}`);
+  speak(`Nice work. ${s.log.length} ${s.log.length === 1 ? 'set' : 'sets'} complete.${s.prs.length ? ' And a new record.' : ''}`);
   screen(`<h1>Nice work 💪</h1>
     <div class="row"><div class="card center"><div class="big">${s.log.length}</div><div class="dim">sets</div></div><div class="card center"><div class="big">${mins}</div><div class="dim">minutes</div></div><div class="card center"><div class="big">${Math.round(work / 60)}</div><div class="dim">min of muscle work</div></div></div>
     ${s.prs.length ? `<div class="card"><h3>Records</h3>${s.prs.map(p => `<div>🏆 ${esc(p)}</div>`).join('')}</div>` : ''}
