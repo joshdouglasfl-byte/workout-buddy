@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119102212';   // set automatically on each commit
+const APP_VERSION = '20261119102313';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -497,7 +497,7 @@ function callout(word) {
   try {
     const u = new SpeechSynthesisUtterance(word); u.rate = 1.15; u.volume = 1;
     const bv = bestVoice(); if (bv) { u.voice = bv; u.lang = bv.lang; }
-    V.speaking = true; V.ttsWords = new Set(['up', 'down', 'done', 'dun', 'don', 'town', 'op']);
+    V.speaking = true; V.ttsWords = new Set(['up', 'down', 'done', 'dun', 'don', 'town', 'op'].concat(word.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/)));
     V.calloutUntil = Date.now() + 2500;               // "down" can sound like "done": ignore done just after a callout
     u.onend = u.onerror = () => { V.calloutUntil = Date.now() + 900; clearTimeout(V.coT); V.coT = setTimeout(() => { V.speaking = false; micRestartAfterSpeech(); }, 1600); };
     speechSynthesis.speak(u);
@@ -1097,7 +1097,7 @@ function runSet(getSet = 0) {
   const coOn = setting('Voice Pacing', 'On') !== 'Off' && plan.seq.filter(p => p.kind !== 'HOLD').every(p => p.t >= 0.8);
   const tickOn = setting('Metronome', 'On') !== 'Off';
   const coReps = new Set([0, 1, 2, 6, 7]);
-  let paceUntil = Infinity;
+  let paceUntil = Infinity, pushCalled = false;
   if (CUR.push) {
     const mine = allSets().filter(x => x.ex === CUR.name && x.dur && (!ex.oneSide || x.side === CUR.side)).sort((a, b) => b.t - a.t);
     const prior = mine.find(x => x.session === SESSION.id) || mine[0];
@@ -1142,6 +1142,7 @@ function runSet(getSet = 0) {
     const lbl = document.getElementById('tempoLbl');
     if (kind !== lastKind) {
       lbl.textContent = kind; lbl.style.color = colors[kind] || 'var(--dim)'; lastKind = kind;
+      if (!pushCalled && t >= paceUntil) { pushCalled = true; callout('Push yourself and max this set!'); }
       if ((kind === 'UP' || kind === 'DOWN') && t < paceUntil) {
         if (coOn && t >= 0 && coReps.has(Math.floor(t / P))) callout(kind === 'UP' ? 'Up!' : 'Down!');
         else if (tickOn) tick(kind === 'UP', t < 0);       // softer during the get-set preview
