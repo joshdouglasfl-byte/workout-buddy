@@ -53,7 +53,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118202003';   // set automatically on each commit
+const APP_VERSION = '20261118202214';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -872,8 +872,9 @@ function repsScreen() {
   speak('How many reps?');
   screen(`<div class="center"><h3>${esc(CUR.name)}${CUR.ex.oneSide ? ` · ${CUR.side} side` : ''} · ${CUR.dur}s</h3><h2>How many reps?</h2>
     <div class="row" style="align-items:center"><button id="m" data-say="-" style="flex:0 0 160px;font-size:60px">−</button><div class="huge" id="rv">${reps}</div><button id="p" data-say="-" style="flex:0 0 160px;font-size:60px">+</button></div>
-    <button class="go mt" id="ok" style="width:100%">Save ${'reps'}</button><div class="heard"></div></div>`,
-    { number: n => { reps = n; draw(); setTimeout(save, 700); }, yes: () => save() });
+    <div id="confirmHint" class="dim" style="visibility:hidden;font-size:22px">Say “save” (or “yes”) to confirm, or say another number</div>
+    <button class="go mt" id="ok" style="width:100%" data-say="save">Save reps</button><div class="heard"></div></div>`,
+    { number: n => { reps = n; draw(); const el = document.getElementById('rv'); el.style.color = 'var(--ok)'; speak(String(n) + '?'); const c = document.getElementById('confirmHint'); if (c) c.style.visibility = 'visible'; }, yes: () => save() });
   on('m', () => { reps = Math.max(0, reps - 1); draw(); }); on('p', () => { reps++; draw(); }); on('ok', save);
   let saved = false;
   function save() {
