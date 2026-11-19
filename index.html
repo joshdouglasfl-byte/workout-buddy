@@ -54,7 +54,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118204103';   // set automatically on each commit
+const APP_VERSION = '20261118204228';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -587,7 +587,7 @@ function home() {
   const R = 88, C = 2 * Math.PI * R;
   const byDay = st.n ? new Date(st.last.getTime() + setting('Streak Gap Allowed (days)', 3) * DAY).toLocaleDateString('en-US', { weekday: 'short' }) : '';
   const streakText = 'workout streak';
-  const streakSub = st.n ? (st.daysLeft === 0 ? '<span class="warn">Work out today to keep it alive</span>' : `Keep it alive: next workout by <b>${byDay}</b>`) : (st.broken ? 'Start a new streak today' : 'Start your streak today');
+  const streakSub = st.n ? (st.daysLeft === 0 ? '<span class="warn">Work out today to keep it alive</span>' : `Keep it alive: next workout by <strong style="color:var(--fg)">${byDay}</strong>`) : (st.broken ? 'Start a new streak today' : 'Start your streak today');
   screen(`<style>
       .hero{background:linear-gradient(135deg,#1d3b2a,#14324f);border-radius:28px;padding:26px 30px;display:flex;align-items:center;gap:30px;margin-bottom:18px}
       .ring{transition:stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1)}
@@ -658,10 +658,10 @@ function streaksView() {
 // ---------- body map ----------
 // Front view (you facing the screen, so your right side is on the left) plus a small back view for the back areas
 const BODY_POS = { neck: [100, 70], shR: [62, 92], shL: [138, 92], elR: [42, 162], elL: [158, 162], wrR: [32, 232], wrL: [168, 232], hpR: [82, 210], hpL: [118, 210], knR: [80, 292], knL: [120, 292] };
-function bodySvg(bs, size, tappable) {
+function bodySvg(bs, size, tappable, selected) {
   const col = id => STATUS_COLOR[bs[REGIONS.find(r => r.id === id).label].status];
   const g = '#3a4150';
-  const joint = id => `<circle data-r="${id}" cx="${BODY_POS[id][0]}" cy="${BODY_POS[id][1]}" r="${tappable ? 15 : 13}" fill="${col(id)}" stroke="#0f1115" stroke-width="3" ${tappable ? 'style="cursor:pointer"' : ''}/>`;
+  const joint = id => `<circle data-r="${id}" cx="${BODY_POS[id][0]}" cy="${BODY_POS[id][1]}" r="${tappable ? 15 : 13}" fill="${col(id)}" stroke="${id === selected ? '#fff' : '#0f1115'}" stroke-width="${id === selected ? 5 : 3}" ${tappable ? 'style="cursor:pointer"' : ''}/>`;
   return `<svg viewBox="0 0 400 400" width="${size}" style="max-width:100%;display:block;margin:0 auto">
     <g fill="${g}" stroke="${g}" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="100" cy="38" r="22"/><rect x="92" y="56" width="16" height="16"/>
@@ -673,8 +673,8 @@ function bodySvg(bs, size, tappable) {
       <path d="M262 92 L244 162 L236 232" stroke-width="16" fill="none"/><path d="M338 92 L356 162 L364 232" stroke-width="16" fill="none"/>
       <path d="M284 212 L282 292 L280 378" stroke-width="20" fill="none"/><path d="M316 212 L318 292 L320 378" stroke-width="20" fill="none"/>
     </g>
-    <rect data-r="ub" x="272" y="92" width="56" height="52" rx="12" fill="${col('ub')}" stroke="#0f1115" stroke-width="3" ${tappable ? 'style="cursor:pointer"' : ''}/>
-    <rect data-r="lb" x="272" y="150" width="56" height="52" rx="12" fill="${col('lb')}" stroke="#0f1115" stroke-width="3" ${tappable ? 'style="cursor:pointer"' : ''}/>
+    <rect data-r="ub" x="272" y="92" width="56" height="52" rx="12" fill="${col('ub')}" stroke="${selected === 'ub' ? '#fff' : '#0f1115'}" stroke-width="${selected === 'ub' ? 5 : 3}" ${tappable ? 'style="cursor:pointer"' : ''}/>
+    <rect data-r="lb" x="272" y="150" width="56" height="52" rx="12" fill="${col('lb')}" stroke="${selected === 'lb' ? '#fff' : '#0f1115'}" stroke-width="${selected === 'lb' ? 5 : 3}" ${tappable ? 'style="cursor:pointer"' : ''}/>
     ${Object.keys(BODY_POS).map(joint).join('')}
     <text x="100" y="398" text-anchor="middle" fill="#9aa1ad" font-size="16">Front</text><text x="300" y="398" text-anchor="middle" fill="#9aa1ad" font-size="16">Back</text>
     <text x="22" y="100" fill="#9aa1ad" font-size="15">R</text><text x="170" y="100" fill="#9aa1ad" font-size="15">L</text>
@@ -688,7 +688,7 @@ function bodyView(selected) {
   screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>How’s your body?</h2></div>
     <p class="dim">Tap an area to set it. 🟢 Good · 🟡 Sore: lighter first set · 🔴 Hurt: ask before exercises that use it</p>
     <div class="row" style="align-items:flex-start">
-      <div style="flex:3">${bodySvg(bs, 560, true)}</div>
+      <div style="flex:3">${bodySvg(bs, 560, true, selected)}</div>
       <div style="flex:2">
         ${sel ? `<div class="card"><h3>${esc(sel.label)}</h3><div class="dim" style="margin-bottom:12px">Now: ${bs[sel.label].status}${bs[sel.label].t ? ' since ' + since(bs[sel.label].t) : ''}</div>
           <div class="chips" style="flex-direction:column">
