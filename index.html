@@ -53,7 +53,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118200601';   // set automatically on each commit
+const APP_VERSION = '20261118200734';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -406,10 +406,12 @@ function vlog(heard, action) {
   try { queue('Events', [tstr(new Date()), SESSION ? SESSION.id : '', 'voice', SCREEN, '', action, heard, uid()], true); } catch {}
 }
 // Pick the most natural installed English voice: your saved choice, else Premium, then Enhanced, then the default
-function voices() { try { return speechSynthesis.getVoices().filter(v => /^en[-_]/i.test(v.lang)); } catch { return []; } }
+const NOVELTY = /eloquence|novelty|bad news|bells|boing|bubbles|cellos|whisper|zarvox|trinoids|organ|superstar|jester|wobble|albert|fred|junior|ralph|good news|hysterical|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley|deranged|pipe/i;
+function voices() { try { return speechSynthesis.getVoices().filter(v => /^en[-_]/i.test(v.lang) && !NOVELTY.test(v.name + ' ' + v.voiceURI)); } catch { return []; } }
 function voiceScore(v) { const n = v.name + ' ' + v.voiceURI; return (/premium/i.test(n) ? 100 : /enhanced/i.test(n) ? 50 : 0) + (/en[-_]US/i.test(v.lang) ? 5 : 0) + (/compact|eloquence|novelty|bad news|bells|boing|bubbles|cellos|whisper|zarvox|trinoids|organ|superstar|jester|wobble|albert|fred|junior|ralph/i.test(n) ? -200 : 0); }
 function bestVoice() {
   const vs = voices(); const want = LS.get('voice', '');
+  if (want === 'system') return null;            // let iPadOS pick (may use the Settings voice)
   return vs.find(v => v.voiceURI === want) || vs.slice().sort((a, b) => voiceScore(b) - voiceScore(a))[0] || null;
 }
 try { speechSynthesis.onvoiceschanged = () => {}; speechSynthesis.getVoices(); } catch {}
@@ -649,8 +651,8 @@ function voicePicker() {
   const cur = bestVoice();
   const good = vs.filter(v => voiceScore(v) >= 50);
   screen(`<h2>Choose the app's voice</h2>
-    ${good.length ? '' : `<div class="card warn">No Premium or Enhanced voices are installed yet, so these will sound robotic. On the iPad: Settings → Accessibility → Read & Speak (or Spoken Content) → Voices → English → pick one marked Premium (for example Ava, Zoe or Evan) and download it. Then come back here.</div>`}
-    <div class="grid2">${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="-" style="text-align:left${cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
+    <div class="card dim" style="font-size:20px">iPadOS doesn't let web apps use the Premium or Enhanced voices you download, only the built-in ones below. “iPad default” lets iPadOS choose, which is worth a try.</div>
+    <div class="grid2"><button class="sm" data-v="system" data-say="-" style="text-align:left${LS.get('voice', '') === 'system' ? ';outline:4px solid var(--acc)' : ''}">iPad default<br><span class="dim" style="font-size:18px">let iPadOS choose</span></button>${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="-" style="text-align:left${LS.get('voice', '') !== 'system' && cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
     <button class="go mt" id="done" style="width:100%" data-say="done">Done</button>`);
   document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { LS.set('voice', b.dataset.v); const was = LS.get('talk', true); LS.set('talk', true); speak('Next up: squats, thirty pounds.'); LS.set('talk', was); voicePicker(); });
   on('done', home);
