@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119152119';   // set automatically on each commit
+const APP_VERSION = '20261119152206';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1435,7 +1435,7 @@ function watchEnd(next) {
 // No watch: let the trainer estimate the calories from your watch history and this session's length, or skip
 function noWatchCalories(next) {
   const mins = Math.max(1, Math.round((Date.now() - SESSION.start) / 60000));
-  speak('No watch today.');
+  // no spoken prompt: the screen is enough
   screen(`<div class="center" style="padding-top:40px"><div style="font-size:100px">🧮</div><h1>No watch today</h1>
     <p class="dim" style="font-size:26px">${mins} minutes, ${SESSION.log.length} sets. Your trainer can estimate the calories from your past watch sessions and add them to Lose It!.</p>
     <div class="row mt" style="width:80%;margin-left:10%"><button class="go" id="est" data-say="estimate">Let trainer estimate</button><button id="skip" data-say="skip">Skip</button></div><div class="heard"></div></div>`, { yes: est });
