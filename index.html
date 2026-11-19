@@ -140,7 +140,7 @@ function allSets() {
   const pend = outbox.filter(o => o.sheet === 'Sets' && !have.has(o.row[17])).map(o => rowToObj('Sets', o.row));
   return base.concat(pend).map(s => ({
     date: s['Date'], ex: s['Exercise'], side: s['Side'] || 'Both', weight: num(s['Weight (lb)']), reps: num(s['Reps']),
-    rir: s['Reps Left'], off: s['Felt Off'] === 'Yes', session: s['Session ID'], set: num(s['Set']),
+    rir: s['Reps Left'], off: s['Felt Off'] === 'Yes', session: s['Session ID'], set: num(s['Set']), dur: num(s['Duration (s)']), est: s['Date Estimated'] === 'Yes',
     t: parseDate(s['Logged At']) || parseDate(s['Date'])
   })).filter(s => s.t && (s.reps != null || s.weight != null));
 }
@@ -588,8 +588,45 @@ function editExercises() {
 
 function weekView() {
   const n = whatsNext();
-  screen(`<h2>This week · <span class="${n.pace.cls}">${n.pace.text}</span></h2><div class="card">${n.info.map(i => `<div class="exrow"><span class="n">${esc(i.ex.name)}</span><div class="bar"><i style="width:${Math.min(100, 100 * i.done / i.ex.quota)}%;background:${i.done >= i.ex.quota ? 'var(--ok)' : i.deficit > 1.5 ? 'var(--warn)' : 'var(--acc)'}"></i></div><span class="c">${i.done}/${i.ex.quota}</span></div>`).join('')}</div><button id="back" style="width:100%">Back</button>`);
+  screen(`<h2>This week · <span class="${n.pace.cls}">${n.pace.text}</span></h2><p class="dim">Tap an exercise for its details and history.</p><div class="card">${n.info.map(i => `<div class="exrow" data-x="${esc(i.ex.name)}" style="cursor:pointer"><span class="n">${esc(i.ex.name)} ›</span><div class="bar"><i style="width:${Math.min(100, 100 * i.done / i.ex.quota)}%;background:${i.done >= i.ex.quota ? 'var(--ok)' : i.deficit > 1.5 ? 'var(--warn)' : 'var(--acc)'}"></i></div><span class="c">${i.done}/${i.ex.quota}</span></div>`).join('')}</div><button id="back" style="width:100%">Back</button>`);
+  document.querySelectorAll('.exrow[data-x]').forEach(r => r.onclick = () => exerciseDetail(r.dataset.x));
   on('back', home);
+}
+
+// One exercise: this week's sets, then week-by-week history
+function exerciseDetail(name) {
+  const ex = exByName(name); if (!ex) return weekView();
+  const sets = allSets().filter(s => s.ex === name && s.reps != null).sort((a, b) => a.t - b.t);
+  const ws = weekStart(), w = weightFor(ex, allSets());
+  const fmtD = d => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const wt = s => s.weight == null ? '' : `${+s.weight.toFixed(1)} lb × `;
+  const thisWeek = sets.filter(s => s.t >= ws);
+  const done = thisWeek.filter(counts).length;
+  // group this week's sets by day, sides together
+  const byDay = {};
+  thisWeek.forEach(s => { const k = dstr(s.t); (byDay[k] = byDay[k] || []).push(s); });
+  const weekHtml = thisWeek.length ? Object.keys(byDay).map(k => `<div style="margin-bottom:10px"><b>${fmtD(parseDate(k))}</b>${byDay[k].map(s => `<div class="exrow"><span class="n">${s.side !== 'Both' ? s.side + ' side' : 'Set ' + (s.set || '')}</span><span style="flex:1">${wt(s)}${s.reps} reps</span><span class="dim" style="flex:0 0 260px">${s.dur ? s.dur + 's · ' : ''}${s.rir ? s.rir + ' left' : ''}${s.off ? ' · felt off' : ''}</span></div>`).join('')}</div>`).join('') : '<p class="dim">No sets yet this week.</p>';
+  // previous weeks: count, top weight, best set, total reps
+  const weeks = {};
+  sets.filter(s => s.t < ws).forEach(s => { const k = dstr(weekStart(s.t)); (weeks[k] = weeks[k] || []).push(s); });
+  const keys = Object.keys(weeks).sort().reverse();
+  const histHtml = keys.length ? `<div class="exrow dim" style="font-size:17px"><span class="n">Week of</span><span style="flex:0 0 90px">Sets</span><span style="flex:0 0 140px">Top weight</span><span style="flex:1">Best set</span><span style="flex:0 0 110px;text-align:right">Total reps</span></div>` + keys.slice(0, 26).map(k => {
+    const g = weeks[k], cnt = g.filter(counts).length;
+    const top = g.filter(s => s.weight != null).reduce((m, s) => Math.max(m, s.weight), 0);
+    const best = g.slice().sort((a, b) => ((b.weight || 0) - (a.weight || 0)) || (b.reps - a.reps))[0];
+    const est = g.some(s => s.est) ? ' <span class="dim">(est.)</span>' : '';
+    return `<div class="exrow"><span class="n">${parseDate(k).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}${est}</span><span style="flex:0 0 90px">${cnt}</span><span style="flex:0 0 140px">${top ? +top.toFixed(1) + ' lb' : '—'}</span><span style="flex:1">${wt(best)}${best.reps}</span><span style="flex:0 0 110px;text-align:right">${g.reduce((a, s) => a + s.reps, 0)}</span></div>`;
+  }).join('') : '<p class="dim">No earlier sets.</p>';
+  const last = sets[sets.length - 1];
+  screen(`<div class="card"><h3>${esc(ex.muscle)} · ${esc(ex.type)}${ex.oneSide ? ' · one side at a time' : ''}</h3><h1>${esc(name)}</h1>
+      <div class="row" style="align-items:flex-end"><div><div class="big">${fmtW(w.w)}</div><div class="dim">next set · ${esc(w.why)}</div></div>
+      <div><div class="big">${done}/${ex.quota}</div><div class="dim">sets this week</div></div>
+      <div><div class="big" style="font-size:44px">${last ? fmtD(last.t) : '—'}</div><div class="dim">last done</div></div></div></div>
+    <div class="card"><h3>This week</h3>${weekHtml}</div>
+    <div class="card"><h3>Previous weeks</h3>${histHtml}</div>
+    <div class="row"><button class="go" id="go" data-say="start">Start ${esc(name)}</button><button id="back" data-say="back">Back</button></div>`);
+  on('go', () => { if (!sessionAlive()) watchGate(() => prep(name)); else prep(name); });
+  on('back', weekView);
 }
 
 // Prepare a set (or a sitting of sets) for one exercise
