@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119150838';   // set automatically on each commit
+const APP_VERSION = '20261119151203';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -953,7 +953,7 @@ function voicePicker() {
 }
 function watchGate(next) {
   if (setting('Watch Reminder', 'Yes') !== 'Yes') { newSession(); return next(); }
-  speak('Start your Apple Watch workout.');
+  // no spoken reminder: the screen is enough
   screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>Start your Apple Watch workout</h1><p class="dim" style="font-size:26px">Traditional Strength Training. Say “running” or tap when it’s going.</p>
     <button class="go mt" id="ok" style="width:70%" data-say="running">Watch is running</button>
     <div class="row mt" style="width:70%;margin-left:15%"><button class="sm" id="nowatch" data-say="no watch">No watch today</button><button class="sm" id="cancel">Back</button></div><div class="heard"></div></div>`,
