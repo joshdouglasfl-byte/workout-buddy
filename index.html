@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119144233';   // set automatically on each commit
+const APP_VERSION = '20261119144808';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -362,12 +362,13 @@ function voiceStart(why) {
       vlog('', 'mic keeps stopping, waiting for a tap'); V.want = false; V.quickStops = 0;
       const el = document.getElementById('mic'); el.className = 'pill warn'; el.textContent = '🎙 tap to listen'; return;
     }
-    if (V.want) setTimeout(() => { try { voiceStart('auto restart'); } catch (err) { vlog('', 'restart failed: ' + err.message); } }, 300);
+    if (V.want && !talking()) setTimeout(() => { try { voiceStart('auto restart'); } catch (err) { vlog('', 'restart failed: ' + err.message); } }, 300);
   };
   try { r.start(); } catch (err) { vlog('', 'start failed: ' + err.message); }
 }
 // if the mic quietly dropped, bring it back
-setInterval(() => { if (V.want && !V.on && !V.paused) voiceStart('watchdog'); }, 4000);
+const talking = () => V.speaking || ('speechSynthesis' in window && speechSynthesis.speaking);
+setInterval(() => { if (V.want && !V.on && !V.paused && !talking()) voiceStart('watchdog'); }, 4000);
 // While the beat and callouts play during a set, the iPad can't listen reliably, so the mic pauses and comes back after
 function micPause() { if (V.paused) return; V.paused = true; try { V.rec && V.rec.abort(); } catch {} V.on = false; const el = document.getElementById('mic'); if (el) { el.className = 'pill'; el.textContent = '🎙 pacing…'; } }
 // The iPad can leave the mic deaf while the sound engine is active, so put the sound engine to sleep before listening again
@@ -386,10 +387,11 @@ function micUI() {
 // Safari only lets the mic restart after a tap: any tap on the page brings it back if it dropped
 document.addEventListener('click', () => { if (!V.paused && (V.needTap || (V.want && !V.on)) && SR) { V.needTap = false; V.quickStops = 0; voiceStart('tap'); } }, true);
 // right after a beep or spoken prompt, make sure the mic is still running
-function micCheckSoon() { setTimeout(() => { if (V.want && !V.on && !V.paused) voiceStart('after sound'); }, 600); }
+function micCheckSoon() { setTimeout(() => { if (V.want && !V.on && !V.paused && !talking()) voiceStart('after sound'); }, 600); }
 // After the app speaks, iPadOS can silently cut the mic while it still looks on: restart it outright
 function micRestartAfterSpeech() {
-  if (!V.want || !V.rec || V.paused) return;
+  if (!V.want || V.paused) return;
+  if (!V.rec) { voiceStart('after prompt'); return; }
   V.restarting = true;
   try { V.rec.abort(); } catch {}
   setTimeout(() => { V.restarting = false; V.on = false; voiceStart('after prompt'); }, 350);
@@ -501,7 +503,10 @@ function speak(text) {
     const u = new SpeechSynthesisUtterance(text); u.rate = 1.0;
     const bv = bestVoice(); if (bv) { u.voice = bv; u.lang = bv.lang; }
     V.speaking = true; V.ttsWords = new Set(text.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
-    u.onend = u.onerror = () => { setTimeout(() => { V.speaking = false; }, 250); micRestartAfterSpeech(); };
+    let ended = false;
+    const fin = () => { if (ended) return; ended = true; clearTimeout(V.spkT); setTimeout(() => { V.speaking = false; }, 250); micRestartAfterSpeech(); };
+    u.onend = u.onerror = fin;
+    clearTimeout(V.spkT); V.spkT = setTimeout(fin, 1500 + text.length * 80);   // iPad sometimes never fires onend
     speechSynthesis.speak(u);
   } catch {}
 }
@@ -514,6 +519,7 @@ function callout(word) {
     V.speaking = true; V.ttsWords = new Set(['up', 'down', 'done', 'dun', 'don', 'town', 'op'].concat(word.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/)));
     V.calloutUntil = Date.now() + 2500;               // "down" can sound like "done": ignore done just after a callout
     u.onend = u.onerror = () => { V.calloutUntil = Date.now() + 900; clearTimeout(V.coT); V.coT = setTimeout(() => { V.speaking = false; micRestartAfterSpeech(); }, 1600); };
+    clearTimeout(V.coT); V.coT = setTimeout(() => { V.speaking = false; micRestartAfterSpeech(); }, 1600 + word.length * 90);   // in case onend never fires
     speechSynthesis.speak(u);
   } catch {}
 }
@@ -1214,7 +1220,7 @@ function finishSet() {
 function repsScreen() {
   let reps = CUR.est;
   const draw = () => { document.getElementById('rv').textContent = reps; };
-  speak('How many reps?');
+  // no spoken prompt here: you just said done, and talking now can leave the mic deaf for your answer
   screen(`<div class="center"><h3>${esc(CUR.name)}${CUR.ex.oneSide ? ` · ${CUR.side} side` : ''} · ${CUR.dur}s</h3><h2>How many reps?</h2>
     <div class="row" style="align-items:center"><button id="m" data-say="-" style="flex:0 0 160px;font-size:60px">−</button><div class="huge" id="rv">${reps}</div><button id="p" data-say="-" style="flex:0 0 160px;font-size:60px">+</button></div>
     <button class="go mt" id="ok" style="width:100%" data-say="save">Save reps</button><div class="heard"></div></div>
