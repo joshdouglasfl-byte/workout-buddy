@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119153505';   // set automatically on each commit
+const APP_VERSION = '20261119154138';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1502,7 +1502,7 @@ function summary() {
     <div class="card">${Object.entries(byEx).map(([k, v]) => `<div class="exrow"><span class="n">${esc(k)}</span><span>${v.map(l => `${l.weight == null ? '' : +l.weight.toFixed(1) + '×'}${l.reps}`).join(' · ')}</span></div>`).join('')}</div>
     <div class="card"><b>This week: ${n.totD} of ${n.totQ} sets</b> · <span class="${n.pace.cls}">${n.pace.text}</span></div>
     <button class="go" id="h" style="width:100%">Done</button>`, { yes: close });
-  function close() { SESSION = null; LS.set('session', null); CUR = null; flush(); home(); }
+  function close() { SESSION = null; LS.set('session', null); CUR = null; flush(); voiceStop(); vlog('', 'mic released after session'); home(); }   // tap the mic to listen again
   on('h', close);
 }
 
