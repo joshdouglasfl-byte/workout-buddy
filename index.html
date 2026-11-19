@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119152457';   // set automatically on each commit
+const APP_VERSION = '20261119152751';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1211,7 +1211,7 @@ function runSet(getSet = 0) {
     let pos, kind;
     if (t < 0) {                                     // countdown
       const n = Math.ceil(-t);
-      if (n !== lastCount) { lastCount = n; c.textContent = n; if (n <= 3) beep(660, 120); }
+      if (n !== lastCount) { lastCount = n; c.textContent = n; }   // no 3-2-1 beeps
       const ph = phaseAt(((t % P) + P) % P); pos = ph.pos; kind = ph.kind;   // preview, phased to land on 0
     } else {
       if (!CUR.start) begin();
