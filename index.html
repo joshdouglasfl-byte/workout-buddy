@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119101226';   // set automatically on each commit
+const APP_VERSION = '20261119101317';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1065,9 +1065,9 @@ function nextTip(ex) {
 }
 const tipHtml = t => t ? `<div class="tip" style="background:#16283a;border-left:6px solid var(--acc);border-radius:14px;padding:12px 16px;font-size:28px;margin-top:10px">🎯 ${esc(t)}</div>` : '';
 
-// Set screen. The get-set countdown runs in the clock spot, and the tempo guide plays one preview rep
-// timed to finish exactly at 0, so the first real rep follows straight on. Before the preview it rests at the start position.
-// Saying "go" early: from the resting start position the set starts at once; mid-preview it finishes that preview rep first.
+// Set screen. The get-set countdown runs in the clock spot while the tempo guide previews the pace the whole time,
+// phased so a rep finishes exactly at 0 and the first real rep follows straight on.
+// Saying "go" early moves 0 to the end of the preview rep in progress (at least 1 s away), so it stays in sync.
 function startSet(short) { runSet(short ? 3 : setting('Get Set (s)', 5)); }
 function runSet(getSet = 0) {
   const ex = CUR.ex, plan = repPlan(ex), P = plan.total;
@@ -1082,7 +1082,7 @@ function runSet(getSet = 0) {
   }
   const tipA = nextTip(ex);
   screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3>${beat}
-      <div class="huge" id="clock" style="${getSet ? 'color:#f5b53d' : ''}">${getSet || 0}</div><div class="dim" style="font-size:26px" id="clockLbl">${getSet ? 'get set… watch the pace →' : 'seconds · target ' + ex.target + 's'}</div>
+      <div class="huge" id="clock" style="${getSet ? 'color:#f5b53d' : ''}">${getSet || 0}</div><div class="dim" style="font-size:26px" id="clockLbl">${getSet ? 'get set… match the pace →' : 'seconds · target ' + ex.target + 's'}</div>
       <div class="big mt" id="reps">0</div><div class="dim">reps at the guide's pace (${+P.toFixed(1)}s each)</div>
       <div id="tipBox">${tipHtml(tipA)}</div></div>
       <div style="flex:1"><div id="tempo" style="height:440px;width:170px"><i id="tb"></i></div><div id="tempoLbl" style="font-size:40px">—</div></div></div>
@@ -1094,13 +1094,13 @@ function runSet(getSet = 0) {
   const coOn = setting('Voice Pacing', 'On') !== 'Off' && !CUR.push && plan.seq.filter(p => p.kind !== 'HOLD').every(p => p.t >= 0.8);
   const coReps = new Set([0, 1, 2, 6, 7]);
   let beeped = false, lastKind = '', lastCount = getSet, tipB = false;
-  const startPos = plan.seq[0].from;               // where a rep begins (bottom for up-first, top for down-first)
   function goEarly() {
     if (CUR.start) return;
     const t = (Date.now() - zero) / 1000;           // negative during the countdown
-    if (t < -P) zero = Date.now();                   // still resting at the start position: go now
-    else zero = Date.now() + (-t) * 1000;            // mid-preview rep: let it land (already the case), nothing to change
-    const c = document.getElementById('clock'); if (c && t < -P) c.textContent = '0';
+    let left = ((-t) % P + P) % P;                   // time until the preview rep in progress finishes
+    if (left < 1) left += P;
+    zero = Date.now() + left * 1000;
+    lastCount = -1;
   }
   function begin() {
     CUR.start = zero; beep(1046, 220);
@@ -1118,8 +1118,7 @@ function runSet(getSet = 0) {
     if (t < 0) {                                     // countdown
       const n = Math.ceil(-t);
       if (n !== lastCount) { lastCount = n; c.textContent = n; if (n <= 3) beep(660, 120); }
-      if (t < -P) { pos = startPos; kind = 'GET SET'; }
-      else { const ph = phaseAt(P + t); pos = ph.pos; kind = ph.kind; }   // preview rep ends exactly at 0
+      const ph = phaseAt(((t % P) + P) % P); pos = ph.pos; kind = ph.kind;   // preview, phased to land on 0
     } else {
       if (!CUR.start) begin();
       c.textContent = Math.floor(t);
