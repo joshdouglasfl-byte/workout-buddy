@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119154804';   // set automatically on each commit
+const APP_VERSION = '20261119155018';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -432,7 +432,7 @@ function micRestartAfterSpeech() {
 }
 document.getElementById('mic').onclick = () => { unlockAudio(); V.quickStops = 0; V.on ? voiceStop() : voiceStart('tap'); };
 // Words the iPad often mishears, mapped to what was meant (only for commands, never note text)
-const ALIAS = { safe: 'save', saved: 'save', belt: 'felt', outright: 'right', fast: 'faster', watching: 'watch', develop: 'developer', redy: 'ready' };
+const ALIAS = { though: 'go', dough: 'go', safe: 'save', saved: 'save', belt: 'felt', outright: 'right', fast: 'faster', watching: 'watch', develop: 'developer', redy: 'ready' };
 const PHRASE_ALIAS = { 'in session': 'end session', 'and session': 'end session', 'felt right right': 'felt right' };
 const FILLER = new Set(['uh', 'um', 'umm', 'hmm', 'so', 'and', 'the', 'oh', 'ah', 'like', 'please', 'now']);
 // Command words that count on their own inside a short phrase ("ready ready ready", "okay go")
