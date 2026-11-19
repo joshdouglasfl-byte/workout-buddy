@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119153016';   // set automatically on each commit
+const APP_VERSION = '20261119153505';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -399,8 +399,13 @@ function micUI() {
   const el = document.getElementById('mic'); if (!el) return;
   const state = V.on ? 'live' : V.paused ? 'paused' : 'off';
   if (el.dataset.state !== state) { el.dataset.state = state; el.className = state; el.innerHTML = `<svg viewBox="0 0 24 24">${state === 'live' ? MIC_SVG : `<g transform="translate(4.2 4.2) scale(.65)">${MIC_SVG}</g>${NO_SVG}`}</svg>`; }
+  // the trainer voice only works after a tap on this page load (e.g. after the app updates itself), so ask for one
   const lbl = document.getElementById('micLbl');
-  if (lbl) lbl.classList.toggle('show', state === 'off' && SCREEN_IS_HOME);
+  if (lbl) {
+    const needTapForVoice = !V.ttsUnlocked && LS.get('talk', true);
+    lbl.textContent = state === 'off' ? 'tap to use voice →' : 'tap once for trainer voice →';
+    lbl.classList.toggle('show', (state === 'off' && SCREEN_IS_HOME) || needTapForVoice);
+  }
 }
 var SCREEN_IS_HOME = false;
 // Safari only lets the mic restart after a tap: any tap on the page brings it back if it dropped
@@ -550,7 +555,7 @@ let actx = null;
 function unlockAudio() {
   try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {}
   // iPadOS only lets the page talk after speech has been started from a tap once: do it silently on the first tap
-  try { if (!V.ttsUnlocked && 'speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); V.ttsUnlocked = true; } } catch {}
+  try { if (!V.ttsUnlocked && 'speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); V.ttsUnlocked = true; micUI(); } } catch {}
 }
 document.addEventListener('touchend', unlockAudio, { passive: true });
 document.addEventListener('click', unlockAudio, true);
