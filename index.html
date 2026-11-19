@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118211113';   // set automatically on each commit
+const APP_VERSION = '20261119100830';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -174,6 +174,8 @@ function exercises() {
     quota: num(e['Weekly Quota']) ?? setting('Default Weekly Quota', 6), repMin: num(e['Rep Min']) ?? 12, repMax: num(e['Rep Max']) ?? 15,
     target: num(e['Target Set (s)']) ?? 45, tempo: e['Tempo'] || 'Even', spr: num(e['Sec per Rep']) ?? 3,
     equip: e['Equipment'] || '', starts: e['Starts'] || '', setup: e['Setup'] || '', cue: e['Form Cue'] || '', order: num(e['Order']) ?? 50,
+    hold: num(e['Pause at Turn (s)']),
+    tips: String(e['Form Tips'] || '').split('|').map(t => t.trim()).filter(Boolean),
     joints: (e['Joints'] ? e['Joints'].split(/,\s*/) : JOINTS[e['Exercise']]) || []
   })).sort((a, b) => a.order - b.order);
 }
@@ -379,6 +381,9 @@ function micRestartAfterSpeech() {
   setTimeout(() => { V.restarting = false; V.on = false; voiceStart('after prompt'); }, 350);
 }
 document.getElementById('mic').onclick = () => { unlockAudio(); V.quickStops = 0; V.on ? voiceStop() : voiceStart('tap'); };
+// Words the iPad often mishears, mapped to what was meant (only for commands, never note text)
+const ALIAS = { safe: 'save', saved: 'save', belt: 'felt', outright: 'right', fast: 'faster', watching: 'watch', develop: 'developer', redy: 'ready' };
+const PHRASE_ALIAS = { 'in session': 'end session', 'and session': 'end session', 'felt right right': 'felt right' };
 const FILLER = new Set(['uh', 'um', 'umm', 'hmm', 'so', 'and', 'the', 'oh', 'ah', 'like', 'please', 'now']);
 // Command words that count on their own inside a short phrase ("ready ready ready", "okay go")
 const WORD = { ready: /^(ready|go|start|begin|redi)$/, done: /^(done|dun|dunn|dona|don|finished|finish)$/, skip: /^skip$/, yes: /^(yes|yeah|yep|okay|ok|running|good|save|sure)$/, no: /^(no|nope|wait|later)$/, next: /^next$/ };
@@ -390,10 +395,16 @@ function decide(utt) {
   const toks = utt.filter(w => !FILLER.has(w)).filter((w, i, a) => i === 0 || w !== a[i - 1]);
   const uniq = [...new Set(toks)];
   // "tell my trainer ..." / "tell my developer ..." work on any screen; anything said after it starts the note
-  const all = utt.join(' '), m = all.match(/\b(?:tell|note for|message) (?:my |the )?(trainer|coach|developer|dev)\b(.*)$/);
-  if (m && !NOTE) { V.utt = []; vlog(heard, 'opened note: ' + m[1]); openNote(/trainer|coach/.test(m[1]) ? 'trainer' : 'developer', m[2].trim()); return; }
+  const NOTE_RE = /\b(?:tell|note for|message) (?:my |the )?(trainer|coach|developer|develop|dev)\b(.*)$/;
+  const all = utt.join(' '), win0 = (V.recent || []).map(r => r.w).join(' ');
+  const m = all.match(NOTE_RE) || (/^(trainer|coach|developer|develop|dev)$/.test(all.trim()) && win0.match(NOTE_RE));   // "tell" … "developer" heard as two phrases
+  if (m && !NOTE) { V.utt = []; V.recent = []; vlog(heard, 'opened note: ' + m[1]); openNote(/trainer|coach/.test(m[1]) ? 'trainer' : 'developer', m[1] === all.trim() ? '' : (m[2] || '').trim()); return; }
   if (NOTE && V.customDecide) { const did = V.customDecide(utt); V.utt = []; return vlog(heard, 'did: ' + did); }
   if (uniq.length > 4) return vlog(heard, 'ignored: sounded like talking');
+  // fix common mishearings for command matching
+  for (let i = 0; i < toks.length; i++) if (ALIAS[toks[i]]) toks[i] = ALIAS[toks[i]];
+  { const pa = PHRASE_ALIAS[toks.join(' ')]; if (pa) toks.splice(0, toks.length, ...pa.split(' ')); }
+  uniq.splice(0, uniq.length, ...new Set(toks));
   const h = V.handlers || {}, phrase = toks.join(' ');
   // button words first (save/skip/clear), then a screen's own number parser
   if (V.customDecide) {
@@ -497,7 +508,7 @@ function openNote(who, start) {
   NOTE = { who, text: start || '', saved: V.handlers, savedMap: SAYMAP, savedCustom: V.customDecide, screen: SCREEN, ex: CUR ? CUR.name : '' };
   const label = who === 'trainer' ? '💬 Note for your trainer' : '🛠 Note for the developer';
   box.innerHTML = `<div class="card" style="max-width:900px;margin:0 auto"><h2>${label}</h2>
-    <p class="dim">Just talk. Say “save note” when you’re done, or tap Save. You can also type.</p>
+    <p class="dim">Just talk. Say “save note” (or “save”) when you’re done, or tap Save. You can also type.</p>
     <textarea id="noteText" style="width:100%;height:220px;font:inherit;font-size:24px;padding:14px;border-radius:14px;background:#0b0c10;color:var(--fg);border:1px solid #333;-webkit-user-select:text;user-select:text"></textarea>
     <div class="row mt"><button class="go" id="noteSave">Save note</button><button class="sm" id="noteClear">Clear</button><button class="sm stop" id="noteCancel">Cancel</button></div></div>`;
   box.style.display = 'block';
@@ -505,7 +516,9 @@ function openNote(who, start) {
   SAYMAP = {}; V.handlers = { custom: true }; V.utt = []; V.screenAt = Date.now();
   V.customDecide = toks => {
     const ph = toks.join(' ');
-    if (/^(save|save note|save it|done|that's it)$/.test(ph)) { saveNote(); return 'note saved'; }
+    if (/^((save|safe|saved|say|same|take|state) (note|it)|save|safe|done|that's it)$/.test(ph)) { saveNote(); return 'note saved'; }
+    const tail = ph.match(/^(.*\S)\s+(?:save|safe|saved|say|same|take|state) note$/);   // "… save note" at the end of a sentence
+    if (tail) { ta.value = (ta.value ? ta.value + ' ' : '') + tail[1]; saveNote(); return 'note saved'; }
     if (/^(cancel|never mind|cancel note)$/.test(ph)) { closeNote(); return 'note cancelled'; }
     ta.value = (ta.value ? ta.value + ' ' : '') + ph; return 'note text';
   };
@@ -941,71 +954,99 @@ function jointCheck(ex, joints) {
 
 // Tempo guide. Each rep = first move, hold, second move, hold. "Sec per Rep" is movement time; holds are added.
 const upFrac = t => /1\/3 up/i.test(t) ? 1 / 3 : /2\/3 up/i.test(t) ? 2 / 3 : 0.5;
-const DOWN_FIRST = new Set(['Squats', 'Incline Bench Press']);   // exercises that start at the top
+const DOWN_FIRST = new Set(['Squats']);   // exercises that start at the top
 const downFirst = ex => ex.starts ? /down/i.test(ex.starts) : DOWN_FIRST.has(ex.name);
 function repPlan(ex) {
-  const hold = setting('Pause at Turn (s)', 0.5), mv = ex.spr, uf = upFrac(ex.tempo);
+  const hold = ex.hold ?? setting('Pause at Turn (s)', 0.5), mv = ex.spr, uf = upFrac(ex.tempo);
   const up = { kind: 'UP', t: mv * uf, from: 0, to: 1 }, dn = { kind: 'DOWN', t: mv * (1 - uf), from: 1, to: 0 };
   const seq = downFirst(ex) ? [dn, { kind: 'HOLD', t: hold, at: 0 }, up, { kind: 'HOLD', t: hold, at: 1 }]
                             : [up, { kind: 'HOLD', t: hold, at: 1 }, dn, { kind: 'HOLD', t: hold, at: 0 }];
   return { seq, total: seq.reduce((a, p) => a + p.t, 0) };
 }
 let setTimer = null;
-// Get-set countdown so the clock doesn't start while you're picking up the weights
-function startSet(short) {
-  const ex = CUR.ex;
-  let left = short ? 3 : setting('Get Set (s)', 5);
-  clearInterval(setTimer);
-  screen(`<div class="center" style="padding-top:20px"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3><h2>Get set</h2>
-    <div class="huge" id="cd" style="font-size:220px">${left}</div>
-    <button class="go mt" id="now" style="width:70%">Start now</button><div class="heard"></div></div>`, { ready: begin });
-  on('now', begin);
-  setTimer = setInterval(() => {
-    left--; const el = document.getElementById('cd'); if (!el) return clearInterval(setTimer);
-    if (left <= 0) return begin();
-    el.textContent = left; if (left <= 3) beep(660, 120);
-  }, 1000);
-  let started = false;
-  function begin() { if (started) return; started = true; clearInterval(setTimer); beep(1046, 220); runSet(); }
+// Form tips: one at a time, rotating so each set shows a different reminder
+function nextTip(ex) {
+  if (!ex || !ex.tips || !ex.tips.length) return '';
+  const k = (local.tip && local.tip[ex.name]) || 0;
+  local.tip = local.tip || {}; local.tip[ex.name] = k + 1; LS.set('local', local);
+  return ex.tips[k % ex.tips.length];
 }
-function runSet() {
-  const ex = CUR.ex, plan = repPlan(ex);
-  CUR.start = Date.now(); CUR.repSecs = plan.total;
+const tipHtml = t => t ? `<div class="tip" style="background:#16283a;border-left:6px solid var(--acc);border-radius:14px;padding:12px 16px;font-size:28px;margin-top:10px">🎯 ${esc(t)}</div>` : '';
+
+// Set screen. The get-set countdown runs in the clock spot, and the tempo guide plays one preview rep
+// timed to finish exactly at 0, so the first real rep follows straight on. Before the preview it rests at the start position.
+// Saying "go" early: from the resting start position the set starts at once; mid-preview it finishes that preview rep first.
+function startSet(short) { runSet(short ? 3 : setting('Get Set (s)', 5)); }
+function runSet(getSet = 0) {
+  const ex = CUR.ex, plan = repPlan(ex), P = plan.total;
+  CUR.repSecs = P; CUR.start = null;
+  let zero = Date.now() + getSet * 1000;          // when the set clock hits 0
   const colors = { UP: 'var(--acc)', DOWN: '#f08a3c', HOLD: '#6b7280' };
-  // last set: show the number to beat (your best last set at this weight)
   let beat = '';
   if (CUR.push) {
     const prev = allSets().filter(x => x.ex === CUR.name && x.reps != null && x.weight === CUR.weight && x.session !== SESSION.id && (!ex.oneSide || x.side === CUR.side));
     const best = prev.reduce((m, x) => Math.max(m, x.reps), 0);
     beat = `<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:26px;margin:4px 0">🔥 ${CUR.pushWhy}: push it${best ? ` · beat ${best}` : ''}</div>`;
   }
+  const tipA = nextTip(ex);
   screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3>${beat}
-      <div class="huge" id="clock">0</div><div class="dim" style="font-size:26px">seconds · target ${ex.target}s</div>
-      <div class="big mt" id="reps">0</div><div class="dim">reps at the guide's pace (${+plan.total.toFixed(1)}s each)</div></div>
+      <div class="huge" id="clock" style="${getSet ? 'color:#f5b53d' : ''}">${getSet || 0}</div><div class="dim" style="font-size:26px" id="clockLbl">${getSet ? 'get set… watch the pace →' : 'seconds · target ' + ex.target + 's'}</div>
+      <div class="big mt" id="reps">0</div><div class="dim">reps at the guide's pace (${+P.toFixed(1)}s each)</div>
+      <div id="tipBox">${tipHtml(tipA)}</div></div>
       <div style="flex:1"><div id="tempo" style="height:440px;width:170px"><i id="tb"></i></div><div id="tempoLbl" style="font-size:40px">—</div></div></div>
-      <button class="stop mt" id="done" style="width:100%;font-size:48px;min-height:150px">DONE</button><div class="heard center"></div>`,
-    { done: finishSet });
-  on('done', finishSet);
-  let beeped = false, lastKind = '';
+      <button class="stop mt" id="done" style="width:100%;font-size:48px;min-height:150px">${getSet ? 'START NOW' : 'DONE'}</button><div class="heard center"></div>`,
+    getSet ? { ready: goEarly } : { done: finishSet });
+  on('done', () => CUR.start ? finishSet() : goEarly());
+  let beeped = false, lastKind = '', lastCount = getSet, tipB = false;
+  const startPos = plan.seq[0].from;               // where a rep begins (bottom for up-first, top for down-first)
+  function goEarly() {
+    if (CUR.start) return;
+    const t = (Date.now() - zero) / 1000;           // negative during the countdown
+    if (t < -P) zero = Date.now();                   // still resting at the start position: go now
+    else zero = Date.now() + (-t) * 1000;            // mid-preview rep: let it land (already the case), nothing to change
+    const c = document.getElementById('clock'); if (c && t < -P) c.textContent = '0';
+  }
+  function begin() {
+    CUR.start = zero; beep(1046, 220);
+    const c = document.getElementById('clock'); if (c) c.style.color = '';
+    const l = document.getElementById('clockLbl'); if (l) l.textContent = 'seconds · target ' + ex.target + 's';
+    const btn = document.getElementById('done'); if (btn) btn.textContent = 'DONE';
+    V.handlers = { done: finishSet }; V.utt = []; V.screenAt = Date.now(); annotate();
+  }
   clearInterval(setTimer);
+  if (!getSet) begin();
   setTimer = setInterval(() => {
-    const s = (Date.now() - CUR.start) / 1000;
     const c = document.getElementById('clock'); if (!c) return clearInterval(setTimer);
-    c.textContent = Math.floor(s);
-    document.getElementById('reps').textContent = Math.floor(s / plan.total);
-    let t = s % plan.total, ph = plan.seq[0];
-    for (const p of plan.seq) { if (t < p.t) { ph = p; break; } t -= p.t; }
-    const pos = ph.kind === 'HOLD' ? ph.at : ph.from + (ph.to - ph.from) * (t / ph.t);
+    const t = (Date.now() - zero) / 1000;
+    let pos, kind;
+    if (t < 0) {                                     // countdown
+      const n = Math.ceil(-t);
+      if (n !== lastCount) { lastCount = n; c.textContent = n; if (n <= 3) beep(660, 120); }
+      if (t < -P) { pos = startPos; kind = 'GET SET'; }
+      else { const ph = phaseAt(P + t); pos = ph.pos; kind = ph.kind; }   // preview rep ends exactly at 0
+    } else {
+      if (!CUR.start) begin();
+      c.textContent = Math.floor(t);
+      document.getElementById('reps').textContent = Math.floor(t / P);
+      const ph = phaseAt(t % P); pos = ph.pos; kind = ph.kind;
+      if (!beeped && t >= ex.target) { beeped = true; beep(1046, 250); c.classList.add('ok'); }
+      if (!tipB && t >= 15 && ex.tips && ex.tips.length > 1) { tipB = true; const tb = document.getElementById('tipBox'); if (tb) tb.innerHTML = tipHtml(nextTip(ex)); }
+    }
     const bar = document.getElementById('tb');
-    bar.style.height = (8 + pos * 92) + '%'; bar.style.background = colors[ph.kind];
+    bar.style.height = (8 + pos * 92) + '%'; bar.style.background = colors[kind] || '#6b7280';
     const lbl = document.getElementById('tempoLbl');
-    if (ph.kind !== lastKind) { lbl.textContent = ph.kind; lbl.style.color = colors[ph.kind]; lastKind = ph.kind; }
-    if (!beeped && s >= ex.target) { beeped = true; beep(1046, 250); c.classList.add('ok'); }
+    if (kind !== lastKind) { lbl.textContent = kind; lbl.style.color = colors[kind] || 'var(--dim)'; lastKind = kind; }
   }, 40);
+  function phaseAt(t) {
+    let ph = plan.seq[0];
+    for (const p of plan.seq) { if (t < p.t) { ph = p; break; } t -= p.t; }
+    return { kind: ph.kind, pos: ph.kind === 'HOLD' ? ph.at : ph.from + (ph.to - ph.from) * Math.min(1, t / ph.t) };
+  }
 }
 function finishSet() {
   clearInterval(setTimer);
-  CUR.dur = Math.round((Date.now() - CUR.start) / 1000);
+  CUR.doneAt = Date.now();                 // rest counts from here
+  CUR.dur = Math.round((CUR.doneAt - CUR.start) / 1000);
   CUR.est = Math.max(1, Math.round(CUR.dur / (CUR.repSecs || CUR.ex.spr)));
   repsScreen();
 }
@@ -1015,10 +1056,17 @@ function repsScreen() {
   speak('How many reps?');
   screen(`<div class="center"><h3>${esc(CUR.name)}${CUR.ex.oneSide ? ` · ${CUR.side} side` : ''} · ${CUR.dur}s</h3><h2>How many reps?</h2>
     <div class="row" style="align-items:center"><button id="m" data-say="-" style="flex:0 0 160px;font-size:60px">−</button><div class="huge" id="rv">${reps}</div><button id="p" data-say="-" style="flex:0 0 160px;font-size:60px">+</button></div>
-    <div id="confirmHint" class="dim" style="visibility:hidden;font-size:22px">Say “save” (or “yes”) to confirm, or say another number</div>
-    <button class="go mt" id="ok" style="width:100%" data-say="save">Save reps</button><div class="heard"></div></div>`,
-    { number: n => { reps = n; draw(); const el = document.getElementById('rv'); el.style.color = 'var(--ok)'; speak(String(n) + '?'); const c = document.getElementById('confirmHint'); if (c) c.style.visibility = 'visible'; }, yes: () => save() });
+    <button class="go mt" id="ok" style="width:100%" data-say="save">Save reps</button><div class="heard"></div></div>
+    <div id="confirm" style="display:none;position:fixed;inset:0;z-index:50;background:rgba(5,6,10,.94);align-items:center;justify-content:center;flex-direction:column;gap:30px">
+      <div style="font-size:44px;color:var(--dim)">${esc(CUR.name)}${CUR.ex.oneSide ? ` · ${CUR.side}` : ''}</div>
+      <div style="font-size:150px;font-weight:800;line-height:1"><span id="cv">0</span> <span style="font-size:70px">reps?</span></div>
+      <div class="row" style="width:86%;gap:24px"><button class="go" id="cy" data-say="yes" style="flex:2;font-size:64px;min-height:190px">YES</button><button id="cn" data-say="no" style="flex:1;font-size:56px;min-height:190px">NO</button></div>
+      <div class="dim" style="font-size:26px">Say “yes”, “no”, or another number</div><div class="heard"></div></div>`,
+    { number: n => ask(n), yes: () => save(), no: () => unask() });
   on('m', () => { reps = Math.max(0, reps - 1); draw(); }); on('p', () => { reps++; draw(); }); on('ok', save);
+  on('cy', save); on('cn', unask);
+  function ask(n) { reps = n; draw(); const c = document.getElementById('confirm'); document.getElementById('cv').textContent = n; c.style.display = 'flex'; speak(String(n) + '?'); }
+  function unask() { const c = document.getElementById('confirm'); if (c) c.style.display = 'none'; speak('How many?'); }
   let saved = false;
   function save() {
     if (saved) return; saved = true;
@@ -1105,11 +1153,11 @@ function checkPR(reps) {
 let restTimer = null;
 function rest(tweak) {
   const secs = setting('Rest Between Sets (s)', 60);
-  const endAt = Date.now() + secs * 1000;
+  const endAt = (CUR.doneAt || Date.now()) + secs * 1000;   // rest started when you said done
   const n = whatsNext({});
   const p = n.pick;
   let nextHtml = '<h2>That’s everything for now</h2>';
-  let nextName = null;
+  let nextName = null, nextSay = '';
   if (p) {
     nextName = p.ex.name;
     const same = p.ex.name === CUR.name;
@@ -1117,7 +1165,11 @@ function rest(tweak) {
     const chg = [];
     if (!same && p.ex.equip !== CUR.ex.equip) chg.push(p.ex.equip);
     if (w !== CUR.weight && w != null) chg.push(`${fmtW(w)} dumbbell${p.ex.oneSide ? '' : 's'}`);
-    nextHtml = `<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big" id="nw">${fmtW(w)}</div><div id="nchg">${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}</div><div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>`;
+    const k = same ? (SESSION.countBy[CUR.name] || 0) + 1 : (SESSION.countBy[p.ex.name] || 0) + 1;
+    const push = k >= 3 || doneThisWeek(p.ex.name, n.sets) + 1 === p.ex.quota;
+    nextSay = `Set ${k}${k <= 3 ? ' of 3' : ''}${push ? ', push set' : ''}`;
+    const banner = `<div style="font-size:${push ? 64 : 58}px;font-weight:800;line-height:1.05;margin:2px 0 8px;color:${push ? '#e7b6ff' : 'var(--acc)'}">${push ? '🔥 ' : ''}SET ${k}${k <= 3 ? ` <span style="font-size:.55em;color:var(--dim)">of 3</span>` : ''}${push ? ' <span style="font-size:.5em">· PUSH SET</span>' : ''}</div>`;
+    nextHtml = `${banner}<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big" id="nw">${fmtW(w)}</div><div id="nchg">${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}</div><div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>${tipHtml(nextTip(p.ex))}`;
   }
   screen(`<div class="row"><div class="card center" style="flex:0 0 300px"><h3>Rest</h3><div class="huge" id="rc">${secs}</div></div><div class="card">${nextHtml}</div></div>
     ${tweak && p && p.ex.name === CUR.name ? `<div class="card"><b>${tweak.msg} ${fmtW(tweak.w)}?</b><div class="row mt"><button class="sm go" id="ty">Yes, change it</button><button class="sm" id="tn">Keep ${fmtW(CUR.weight)}</button></div></div>` : ''}
@@ -1126,12 +1178,13 @@ function rest(tweak) {
   if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
   on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
   clearInterval(restTimer);
+  if (nextSay) speak(`Rest. ${nextSay} next.`);
   let rung = false;
   restTimer = setInterval(() => {
     const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
     const el = document.getElementById('rc'); if (!el) return clearInterval(restTimer);
     el.textContent = left;
-    if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); speak(nextName ? `Rest is up. ${nextName}.` : 'Rest is up.'); }
+    if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); speak(nextName ? `Rest is up. ${nextSay}. ${nextName}.` : 'Rest is up.'); }
   }, 250);
   function goNext() { clearInterval(restTimer); if (!nextName) { event('session_end', '', '', 'Nothing left', `${SESSION.log.length} sets`); return watchEnd(summary); } if (nextName !== CUR.name) CUR.nextWeight = undefined; prep(nextName); }
 }
