@@ -60,7 +60,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119150310';   // set automatically on each commit
+const APP_VERSION = '20261119150433';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1267,11 +1267,12 @@ function repsScreen() {
 }
 function effortScreen() {
   let off = false;
-  speak('How many reps left?');
+  // no spoken prompt: talking here left the mic deaf for your first answer
   screen(`<div class="center"><h2>How many reps did you have left?</h2>
     <div class="chips"><button id="r0">0</button><button id="r2">2</button><button id="r4">4+</button></div>
     <button class="mt sm" id="off" style="width:100%" data-say="off">⚠️ This felt off (pain or odd fatigue)</button><div class="heard"></div></div>`,
-    { number: n => pick(n >= 4 ? '4+' : n >= 2 ? '2' : '0') });
+    { number: n => { if (n >= 10 && /^(\d)\1+$/.test(String(n))) n = n % 10;   // "one" said twice can come through as 11
+        pick(n >= 4 ? '4+' : n >= 2 ? '2' : '0'); } });
   on('r0', () => pick('0')); on('r2', () => pick('2')); on('r4', () => pick('4+'));
   on('off', () => { off = !off; document.getElementById('off').classList.toggle('sel', off); });
   function pick(rir) {
