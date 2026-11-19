@@ -530,10 +530,12 @@ function watchGate(next) {
   if (setting('Watch Reminder', 'Yes') !== 'Yes') { newSession(); return next(); }
   speak('Start your Apple Watch workout.');
   screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>Start your Apple Watch workout</h1><p class="dim" style="font-size:26px">Traditional Strength Training. Say “running” or tap when it’s going.</p>
-    <button class="go mt" id="ok" style="width:70%" data-say="running">Watch is running</button><div class="mt"><button class="sm" id="cancel">Back</button></div><div class="heard"></div></div>`,
+    <button class="go mt" id="ok" style="width:70%" data-say="running">Watch is running</button>
+    <div class="row mt" style="width:70%;margin-left:15%"><button class="sm" id="nowatch" data-say="no watch">No watch today</button><button class="sm" id="cancel">Back</button></div><div class="heard"></div></div>`,
     { yes: ok });
   function ok() { newSession(); event('session_start', '', '', '', 'watch confirmed'); next(); }
-  on('ok', ok); on('cancel', home);
+  function noWatch() { newSession(); SESSION.noWatch = true; saveSession(); event('session_start', '', '', '', 'no watch'); next(); }
+  on('ok', ok); on('nowatch', noWatch); on('cancel', home);
 }
 
 function pickExercise() {
@@ -827,12 +829,24 @@ function endFlow() {
   function finish(r) { event('session_end', '', '', r, `${SESSION.log.length} sets`); watchEnd(summary); }
 }
 function watchEnd(next) {
+  if (SESSION && SESSION.noWatch) return noWatchCalories(next);
   if (setting('Watch Reminder', 'Yes') !== 'Yes') return next();
   speak('Stop your Apple Watch workout.');
   screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>End your Apple Watch workout</h1><p class="dim" style="font-size:26px">Swipe right on the watch and tap End. Keep the summary showing for the next step.</p>
     <button class="go mt" id="ok" style="width:70%" data-say="stopped">Watch is stopped</button><div class="heard"></div></div>`, { yes: ok });
   function ok() { event('watch_end', '', '', '', 'watch stopped'); caloriesScreen(next); }
   on('ok', ok);
+}
+// No watch: let the trainer estimate the calories from your watch history and this session's length, or skip
+function noWatchCalories(next) {
+  const mins = Math.max(1, Math.round((Date.now() - SESSION.start) / 60000));
+  speak('No watch today. Should your trainer estimate the calories?');
+  screen(`<div class="center" style="padding-top:40px"><div style="font-size:100px">🧮</div><h1>No watch today</h1>
+    <p class="dim" style="font-size:26px">${mins} minutes, ${SESSION.log.length} sets. Your trainer can estimate the calories from your past watch sessions and add them to Lose It!.</p>
+    <div class="row mt" style="width:80%;margin-left:10%"><button class="go" id="est" data-say="estimate">Let trainer estimate</button><button id="skip" data-say="skip">Skip</button></div><div class="heard"></div></div>`, { yes: est });
+  function est() { event('watch_calories', '', '', 'estimate', `${mins} min, ${SESSION.log.length} sets, no watch, estimate requested`); toast('Your trainer will estimate it'); next(); }
+  on('est', est);
+  on('skip', () => { event('watch_calories', '', '', '', 'no watch, skipped'); next(); });
 }
 // Active calories from the watch summary; the nightly trainer adds them to Lose It!
 function parseCalories(toks) {
