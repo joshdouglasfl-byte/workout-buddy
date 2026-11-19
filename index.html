@@ -42,6 +42,7 @@ button.sel{outline:4px solid var(--acc)}
 input{font:inherit;font-size:22px;width:100%;padding:16px;border-radius:14px;border:1px solid #333;background:#0b0c10;color:var(--fg);-webkit-user-select:text;user-select:text}
 .say{text-decoration:underline;text-decoration-thickness:4px;text-underline-offset:6px;text-decoration-color:var(--warn)}
 button .say{color:inherit}
+.topback{position:absolute;top:14px;right:16px;font-size:22px;min-height:56px;padding:10px 20px;border-radius:16px}
 .center{text-align:center}
 .mt{margin-top:16px}
 </style>
@@ -53,7 +54,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261118203239';   // set automatically on each commit
+const APP_VERSION = '20261118203300';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -620,13 +621,13 @@ function streaksView() {
   const best = chains.reduce((m, c) => c.n > m.n ? c : m, { n: 0 });
   const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const past = chains.slice().sort((a, b) => b.n - a.n || b.end - a.end).slice(0, 10);
-  screen(`<h2>🔥 Workout streaks</h2>
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>🔥 Workout streaks</h2></div>
     <div class="card"><h3>How it works</h3><p style="font-size:24px;margin:0">Every workout day adds one to your streak, as long as you never go more than <b>${gap} days</b> between workouts. Rest days are fine; they just can't stretch past ${gap} days. Miss that window and the streak starts over at your next workout.</p></div>
     <div class="row"><div class="card center"><div class="big">${st.n}</div><div class="dim">current streak</div></div><div class="card center"><div class="big">${best.n}</div><div class="dim">best ever${best.n ? '<br>' + fmt(best.start) + ' – ' + fmt(best.end) : ''}</div></div><div class="card center"><div class="big">${chains.length}</div><div class="dim">streaks started</div></div></div>
     <div class="card"><h3>Longest streaks</h3>${past.map(c => `<div class="exrow"><span class="n">🔥 ${c.n} workout${c.n === 1 ? '' : 's'}</span><span style="flex:1">${fmt(c.start)}${c.n > 1 ? ' – ' + fmt(c.end) : ''}</span>${c === chains[chains.length - 1] && st.n ? '<span class="ok">current</span>' : ''}</div>`).join('') || '<p class="dim">No workouts yet.</p>'}
       <p class="dim" style="font-size:17px">Based on dated workouts; the 13 notebook sessions with estimated dates aren't counted.</p></div>
     <button id="back" style="width:100%" data-say="back">Back</button>`);
-  on('back', home);
+  on('back', home); on('back2', home);
 }
 
 // ---------- records ----------
@@ -640,11 +641,11 @@ function recordsView() {
     return { name: e.name, top, reps: atTop.reps, when: atTop.t };
   }).filter(Boolean);
   const fmtD = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  screen(`<h2>🏆 Personal records</h2>
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>🏆 Personal records</h2></div>
     <div class="card"><h3>Records set in the app</h3>${prs.length ? prs.map(r => `<div class="exrow"><span class="n">${esc(r['Name'])}</span><span style="flex:1">${esc(r['Detail'])}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(parseDate(r['Date']))}</span></div>`).join('') : '<p class="dim">None yet. Beat your heaviest weight, or your most reps at a weight, to earn one.</p>'}</div>
     <div class="card"><h3>All-time heaviest, from your full history</h3>${bests.map(b => `<div class="exrow"><span class="n">${esc(b.name)}</span><span style="flex:1">${+b.top.toFixed(1)} lb × ${b.reps}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(b.when)}</span></div>`).join('')}</div>
     <button id="back" style="width:100%" data-say="back">Back</button>`);
-  on('back', home);
+  on('back', home); on('back2', home);
 }
 
 // ---------- up next: just the next exercise ----------
@@ -719,9 +720,9 @@ function editExercises() {
 
 function weekView() {
   const n = whatsNext();
-  screen(`<h2>This week · <span class="${n.pace.cls}">${n.pace.text}</span></h2><p class="dim">Tap an exercise for its details and history.</p><div class="card">${n.info.map(i => `<div class="exrow" data-x="${esc(i.ex.name)}" style="cursor:pointer"><span class="n">${esc(i.ex.name)} ›</span><div class="bar"><i style="width:${Math.min(100, 100 * i.done / i.ex.quota)}%;background:${i.done >= i.ex.quota ? 'var(--ok)' : i.deficit > 1.5 ? 'var(--warn)' : 'var(--acc)'}"></i></div><span class="c">${i.done}/${i.ex.quota}</span></div>`).join('')}</div><button id="back" style="width:100%">Back</button>`);
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="-" style="top:0">‹ Back</button><h2>This week · <span class="${n.pace.cls}">${n.pace.text}</span></h2></div><p class="dim">Tap an exercise for its details and history.</p><div class="card">${n.info.map(i => `<div class="exrow" data-x="${esc(i.ex.name)}" style="cursor:pointer"><span class="n">${esc(i.ex.name)} ›</span><div class="bar"><i style="width:${Math.min(100, 100 * i.done / i.ex.quota)}%;background:${i.done >= i.ex.quota ? 'var(--ok)' : i.deficit > 1.5 ? 'var(--warn)' : 'var(--acc)'}"></i></div><span class="c">${i.done}/${i.ex.quota}</span></div>`).join('')}</div><button id="back" style="width:100%">Back</button>`);
   document.querySelectorAll('.exrow[data-x]').forEach(r => r.onclick = () => exerciseDetail(r.dataset.x));
-  on('back', home);
+  on('back', home); on('back2', home);
 }
 
 // One exercise: this week's sets, then week-by-week history
@@ -749,7 +750,7 @@ function exerciseDetail(name) {
     return `<div class="exrow"><span class="n">${parseDate(k).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}${est}</span><span style="flex:0 0 90px">${cnt}</span><span style="flex:0 0 140px">${top ? +top.toFixed(1) + ' lb' : '—'}</span><span style="flex:1">${wt(best)}${best.reps}</span><span style="flex:0 0 110px;text-align:right">${g.reduce((a, s) => a + s.reps, 0)}</span></div>`;
   }).join('') : '<p class="dim">No earlier sets.</p>';
   const last = sets[sets.length - 1];
-  screen(`<div class="card"><h3>${esc(ex.muscle)} · ${esc(ex.type)}${ex.oneSide ? ' · one side at a time' : ''}</h3><h1>${esc(name)}</h1>
+  screen(`<div class="card" style="position:relative"><button class="topback" id="back2" data-say="-">‹ Back</button><h3>${esc(ex.muscle)} · ${esc(ex.type)}${ex.oneSide ? ' · one side at a time' : ''}</h3><h1>${esc(name)}</h1>
       <div class="row" style="align-items:flex-end"><div><div class="big">${fmtW(w.w)}</div><div class="dim">next set · ${esc(w.why)}</div></div>
       <div><div class="big">${done}/${ex.quota}</div><div class="dim">sets this week</div></div>
       <div><div class="big" style="font-size:44px">${last ? fmtD(last.t) : '—'}</div><div class="dim">last done</div></div></div></div>
@@ -757,7 +758,7 @@ function exerciseDetail(name) {
     <div class="card"><h3>Previous weeks</h3>${histHtml}</div>
     <div class="row"><button class="go" id="go" data-say="start">Start ${esc(name)}</button><button id="back" data-say="back">Back</button></div>`);
   on('go', () => { if (!sessionAlive()) watchGate(() => prep(name)); else prep(name); });
-  on('back', weekView);
+  on('back', weekView); on('back2', weekView);
 }
 
 // Prepare a set (or a sitting of sets) for one exercise
