@@ -170,7 +170,7 @@ function exercises() {
   })).sort((a, b) => a.order - b.order);
 }
 const exByName = n => exercises().find(e => e.name === n);
-const NAME_SAY = { 'Squats': 'squats', 'Single Arm Row': 'row', 'Incline Bench Press': 'incline', 'Lateral Shoulder Raise': 'lateral', 'Tricep Kickback': 'kickback', 'Sup Dumbbell Curls': 'curls', 'DB Over Press': 'overhead', 'Leg Raises': 'leg', 'Reverse Crunch': 'crunch', 'Plank Hip Dip': 'plank', 'Mountain Climbers': 'climbers', 'Dead Bug': 'bug', 'Heel Tap': 'heel' };
+const NAME_SAY = { 'Squats': 'squats', 'Single Arm Row': 'row', 'Incline Bench Press': 'incline', 'Lateral Shoulder Raise': 'lateral', 'Tricep Kickback': 'kickback', 'Sup Dumbbell Curls': 'curls', 'DB Over Press': 'press', 'Leg Raises': 'leg', 'Reverse Crunch': 'crunch', 'Plank Hip Dip': 'plank', 'Mountain Climbers': 'climbers', 'Dead Bug': 'bug', 'Heel Tap': 'heel' };
 const planFor = n => ((S && S.plan) || []).find(p => p['Exercise'] === n);
 
 // Week math (week starts Monday)
