@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119152206';   // set automatically on each commit
+const APP_VERSION = '20261119152457';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1298,7 +1298,7 @@ function effortScreen() {
 }
 function tempoScreen() {
   const t = CUR.ex.tempo;
-  speak('Did the tempo fit?');
+  // no spoken prompt
   screen(`<div class="center"><h2>Did the tempo fit?</h2><p class="dim">Now: ${esc(t)}, ${CUR.ex.spr}s per rep</p>
     <button class="go" id="g" style="width:100%" data-say="right">Felt right</button>
     <h3 class="mt">Or switch the pattern</h3><div class="chips"><button class="sm" data-t="Even" data-say="even">Even up and down</button><button class="sm" data-t="1/3 up 2/3 down" data-say="slow down">Slow down (⅓ up, ⅔ down)</button><button class="sm" data-t="2/3 up 1/3 down" data-say="slow up">Slow up (⅔ up, ⅓ down)</button></div>
@@ -1380,8 +1380,7 @@ function rest(tweak) {
   if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const npb = document.getElementById('npb'); if (npb) npb.innerHTML = pbHtml(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
   on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
   clearInterval(restTimer);
-  if (CUR.levelUp) speak(`Level up! Level ${CUR.levelUp.L}, ${CUR.levelUp.title}. ${nextSay ? nextSay + ' next.' : ''}`);
-  else if (nextSay) speak(`Rest. ${nextSay} next.`);
+  if (CUR.levelUp) speak(`Level up! Level ${CUR.levelUp.L}, ${CUR.levelUp.title}.`);   // otherwise rest starts quietly
   let rung = false;
   restTimer = setInterval(() => {
     const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
@@ -1401,7 +1400,7 @@ const SKIP_REASONS = ['Too tired', 'Joint hurts', 'Short on time', 'Equipment', 
 const REASON_SAY = { 'Too tired': 'tired', 'Joint hurts': 'joint', 'Short on time': 'time', 'Equipment': 'equipment', 'Not feeling it': 'feeling', 'Other': 'other', 'Done for now': 'done', 'Something hurts': 'hurts', 'Out of time': 'time' };
 function skipFlow(name) {
   clearInterval(restTimer);
-  speak('Why skip?');
+  // no spoken prompt
   screen(`<h2>Why skip ${esc(name)}?</h2><div class="chips">${SKIP_REASONS.map(r => `<button data-r="${r}" data-say="${REASON_SAY[r]}">${r}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Never mind</button>`);
   document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
     const r = b.dataset.r;
@@ -1463,7 +1462,7 @@ function parseCalories(toks) {
 function caloriesScreen(next) {
   let cal = '';
   const draw = () => { document.getElementById('cv').textContent = cal || '—'; };
-  speak('How many active calories?');
+  // no spoken prompt
   screen(`<div class="center"><h2>Active calories on the watch summary?</h2>
     <div class="huge" id="cv">—</div>
     <div class="grid2 mt" style="grid-template-columns:repeat(5,1fr)">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map(d => `<button class="sm" data-d="${d}" data-say="-">${d}</button>`).join('')}</div>
