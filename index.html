@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261120170509';   // set automatically on each commit
+const APP_VERSION = '20261120170550';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -304,7 +304,7 @@ function whatsNext(opts = {}) {
 // ---------- voice ----------
 const V = { rec: null, on: false, want: false, speaking: false, handlers: null, prev: [], lastWordAt: 0, utt: [], timer: null, ttsWords: new Set(), screenAt: 0 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-const NUMW = { zero: 0, none: 0, one: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, 'twenty-one': 21, 'twenty-two': 22, 'twenty-three': 23, 'twenty-four': 24, 'twenty-five': 25 };
+const NUMW = { zero: 0, none: 0, one: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, 'twenty-one': 21, 'twenty-two': 22, 'twenty-three': 23, 'twenty-four': 24, 'twenty-five': 25, thirty: 30, forty: 40, fifty: 50, sixty: 60 };
 const SAY = {
   ready: /^(ready|go|let'?s go|start|i'?m ready|begin|redi)$/,
   done: /^(done|dun|dunn|dona|don|finished|that'?s it|stop set)$/,
@@ -479,7 +479,9 @@ function decide(utt) {
   if (uniq.length <= 3) { const k = Object.keys(SAYMAP).find(x => !x.includes(' ') && uniq.includes(x)); if (k) return press(k); }
   if (h.number) {
     for (let i = toks.length - 1; i >= 0; i--) {
-      const w = toks[i]; const n = /^\d+$/.test(w) ? +w : NUMW[w];
+      const w = toks[i]; let n = /^\d+$/.test(w) ? +w : NUMW[w];
+      // "thirty six" in one phrase: join a tens word with the digit after it
+      if (n != null && n < 10 && i > 0) { const p = toks[i - 1], pn = /^\d+$/.test(p) ? +p : NUMW[p]; if (pn >= 20 && pn % 10 === 0) n += pn; }
       if (n != null && uniq.length <= 3) { V.utt = []; vlog(heard, 'did: number ' + n); return h.number(n, w); }
     }
   }
@@ -1339,7 +1341,13 @@ function repsScreen() {
       <div style="font-size:150px;font-weight:800;line-height:1"><span id="cv">0</span> <span style="font-size:70px">reps?</span></div>
       <div class="row" style="width:86%;gap:24px"><button class="go" id="cy" data-say="yes" style="flex:2;font-size:64px;min-height:190px">YES</button><button id="cn" data-say="no" style="flex:1;font-size:56px;min-height:190px">NO</button></div>
       <div class="dim" style="font-size:26px">Say “yes”, “no”, or another number</div><div class="heard"></div></div>`,
-    { number: n => ask(n), yes: () => save(), no: () => unask() });
+    { number: n => {
+        // "thirty" … "six" heard as two phrases: a single digit right after a tens number joins it (30 + 6 = 36)
+        if (n < 10 && lastTens && Date.now() - lastTens.at < 2500) n += lastTens.n;
+        lastTens = (n >= 20 && n % 10 === 0) ? { n, at: Date.now() } : null;
+        ask(n);
+      }, yes: () => save(), no: () => unask() });
+  let lastTens = null;
   on('m', () => { reps = Math.max(0, reps - 1); draw(); }); on('p', () => { reps++; draw(); }); on('ok', save);
   on('cy', save); on('cn', unask);
   function ask(n) { reps = n; draw(); const c = document.getElementById('confirm'); document.getElementById('cv').textContent = n; c.style.display = 'flex'; }   // no speech here: talking restarts the mic right when you answer
