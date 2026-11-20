@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261119161241';   // set automatically on each commit
+const APP_VERSION = '20261120170509';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1265,6 +1265,7 @@ function runSet(getSet = 0) {
     paceUntil = Math.min(paceUntil, 0.5 * ((prior && prior.dur) || ex.target));
   }
   let resumed = false;
+  const lastPh = plan.seq[plan.seq.length - 1], endHold = lastPh.kind === 'HOLD' ? lastPh.t : 0;
   let beeped = false, lastKind = '', lastCount = getSet, tipB = false;
   function goEarly() {
     if (CUR.start) return;
@@ -1295,7 +1296,7 @@ function runSet(getSet = 0) {
     } else {
       if (!CUR.start) begin();
       c.textContent = Math.floor(t);
-      document.getElementById('reps').textContent = Math.floor(t / P);
+      document.getElementById('reps').textContent = Math.floor((t + endHold) / P);   // counts when you reach the end of the rep, not after the pause
       const ph = phaseAt(t % P); pos = ph.pos; kind = ph.kind;
       if (!beeped && t >= ex.target) { beeped = true; beep(1046, 250); c.classList.add('ok'); }
       if (!resumed && paceOn && t >= paceUntil + (CUR.push ? 2.5 : 0.3)) { resumed = true; micResume('after pacing'); const l = document.getElementById('clockLbl'); if (l) l.textContent = 'say “done” when you finish'; }
