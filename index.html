@@ -68,7 +68,7 @@ button .say{color:inherit}
 <div id="toast" class="toast"></div>
 <script>
 'use strict';
-const APP_VERSION = '20261120170550';   // set automatically on each commit
+const APP_VERSION = '20261120170819';   // set automatically on each commit
 // ---------- small helpers ----------
 const $app = document.getElementById('app');
 const LS = {
@@ -1559,7 +1559,13 @@ function caloriesScreen(next) {
     { number: () => {} });
   // spoken numbers can be several words ("one twenty", "one hundred twenty", "120")
   V.handlers = { custom: true };
-  V.customDecide = toks => { const n = parseCalories(toks); if (n) { cal = String(n); draw(); return 'calories ' + n; } return null; };
+  let lastCal = null;   // "thirty" … "six" heard as two phrases: a digit (or tens) right after joins it (30 + 6 = 36, 100 + 20 = 120)
+  V.customDecide = toks => {
+    let n = parseCalories(toks); if (!n) return null;
+    if (lastCal && Date.now() - lastCal.at < 2500 && ((lastCal.n % 10 === 0 && n < 10) || (lastCal.n % 100 === 0 && n < 100))) n += lastCal.n;
+    lastCal = { n, at: Date.now() };
+    cal = String(n); draw(); return 'calories ' + n;
+  };
   document.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { if (cal.length < 4) cal += b.dataset.d; draw(); });
   on('clr', () => { cal = ''; draw(); });
   on('save', () => {
