@@ -2,12 +2,13 @@
  "entries": [
   {
    "date": "2026-11-21",
-   "version": "20261121165403",
+   "version": "20261121170952",
    "items": [
     "What's new: this list, under Settings > About",
     "Notes from your trainer show on the home screen, with Got it and Reply; all of them are under Settings > Trainer notes",
     "If your watch sends workout calories on its own, the app no longer asks you to type them",
-    "Settings shows an About card: app version, whether the sheet is connected, last load and any problem"
+    "Settings shows an About card: app version, whether the sheet is connected, last load and any problem",
+    "Michelle's setup link is gone from Settings now that her iPad is set up"
    ]
   },
   {

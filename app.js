@@ -1004,7 +1004,6 @@ function settingsView() {
       <button id="pickv" style="text-align:left">🗣️ Choose voice<br><span class="dim" style="font-size:18px">The voice used for prompts</span></button>
       <button id="coach" style="text-align:left">📬 Trainer notes<br><span class="dim" style="font-size:18px">Everything your trainer has sent you</span></button>
       <button id="refresh" style="text-align:left">🔄 Reload plan<br><span class="dim" style="font-size:18px">Fetch the latest from your sheet</span></button>
-      ${PERSON === 'Josh' && CFG ? `<button id="share" style="text-align:left">👩 Michelle's setup link<br><span class="dim" style="font-size:18px">Send it to her iPad to connect her app</span></button>` : ''}
     </div>
     <div class="card"><h3>About</h3><div class="dim" style="font-size:18px;line-height:1.6">
       App version <b>${esc(APP_VERSION || 'checking…')}</b> · ${esc(PERSON)}<br>
@@ -1020,11 +1019,6 @@ function settingsView() {
   on('refresh', async () => { await loadState(); toast('Plan reloaded'); settingsView(); });
   on('coach', coachView);
   on('news', newsView);
-  on('share', async () => {
-    const link = new URL('../michelle/', location.href).href + '#setup=' + btoa(JSON.stringify({ url: CFG.url, key: CFG.key })).replace(/\+/g, '-').replace(/\//g, '_');
-    try { if (navigator.share) { await navigator.share({ title: 'Workout Buddy for Michelle', url: link }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
-    try { await navigator.clipboard.writeText(link); toast('Link copied: send it to Michelle'); } catch { prompt('Copy this link for Michelle', link); }
-  });
   on('back', home); on('back2', home);
 }
 document.getElementById('gear').onclick = () => { unlockAudio(); if (NOTE) closeNote(); settingsView(); };
