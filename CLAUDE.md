@@ -13,8 +13,8 @@ Home-gym workout app for Josh and Michelle. Follow the `josh-app-dev` skill for 
 - Every push: bump `version.json` so open apps reload to the new version.
 - Test before pushing: Playwright with the API stubbed via page.route at 390x844 and 820x1180 (see the josh-app-dev skill), and `node --check` plus a SpreadsheetApp mock for Code.gs.
 
-## Watch calories via iPhone shortcut (2026-11-21)
-- Settings key `Watch Calories`: `Ask` (default, keypad after "Watch is stopped") or `Shortcut`. With `Shortcut` the app skips the keypad and logs an Events `watch_calories` row with Reason `shortcut`; the iPhone "Log Watch Workout" shortcut (Apple Watch Workout ends automation) appends the workout straight to Food_Log Exercise with Source `Apple Watch`, EntryID `AW-<start yyyyMMddHHmm>`. Set it per person in the Settings tab (Person row) once that person's shortcut is confirmed working. No-watch flow unchanged.
+## Watch calories (2026-11-21)
+- Settings key `Watch Calories`: `Ask` (default, keypad after "Watch is stopped") or `Shortcut` (name kept from the dropped iPhone-shortcut plan). With `Shortcut` the app skips the keypad and logs an Events `watch_calories` row with Reason `shortcut`; Health Auto Export on that person's iPhone posts the watch workout to the Food Log script, which adds it to Food_Log Exercise with Source `Apple Watch`, EntryID `AW-<start yyyyMMddHHmm>` (see Food Log CLAUDE.md). Josh's row is set; set Michelle's (Person row) once her first watch workout arrives. No-watch flow unchanged.
 - 2026-11-21: sheet time zone switched from America/Los_Angeles to America/New_York (matches Code.gs's hardcoded TZ; reads use display values, so nothing shifted).
 
 ## Coach notes and What's new (2026-11-21)
