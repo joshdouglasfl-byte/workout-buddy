@@ -49,3 +49,6 @@ button .say{color:inherit}
 .exrow{padding:7px 0}
 .center{text-align:center}
 .mt{margin-top:16px}
+.news-dot{width:12px;height:12px;border-radius:50%;background:#3ddc84;display:inline-block}
+#gear{position:relative}
+#gear.dot::after{content:'';position:absolute;top:2px;right:4px;width:10px;height:10px;border-radius:50%;background:#3ddc84}

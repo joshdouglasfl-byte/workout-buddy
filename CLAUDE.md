@@ -16,3 +16,8 @@ Home-gym workout app for Josh and Michelle. Follow the `josh-app-dev` skill for 
 ## Watch calories via iPhone shortcut (2026-11-21)
 - Settings key `Watch Calories`: `Ask` (default, keypad after "Watch is stopped") or `Shortcut`. With `Shortcut` the app skips the keypad and logs an Events `watch_calories` row with Reason `shortcut`; the iPhone "Log Watch Workout" shortcut (Apple Watch Workout ends automation) appends the workout straight to Food_Log Exercise with Source `Apple Watch`, EntryID `AW-<start yyyyMMddHHmm>`. Set it per person in the Settings tab (Person row) once that person's shortcut is confirmed working. No-watch flow unchanged.
 - 2026-11-21: sheet time zone switched from America/Los_Angeles to America/New_York (matches Code.gs's hardcoded TZ; reads use display values, so nothing shifted).
+
+## Coach notes and What's new (2026-11-21)
+- Coach Notes tab (Date, Time, Person, From, Message, Status New/Read, EntryID): the trainer's messages, shown as a "From your trainer" card on home (unread only, last 2) with Got it (generic update Status = Read; ids kept in `wb.<Person>.coachRead` and re-sent until the sheet shows Read) and Reply (opens the trainer note). Settings > Trainer notes lists them all. Loaded after each `state` load.
+- Michelle's trainer and dietitian run in Josh's Claude for now (workout-trainer skill, michelle-dietitian skill); her replies go out as Coach Notes.
+- `changelog.json` + Settings > About > What's new (dot on the gear until read; `newsSeen`/`latestNews`). Seeded from git log on 2026-11-21; entries before version.json existed (Nov 18-19) use the date as their version.

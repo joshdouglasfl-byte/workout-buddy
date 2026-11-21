@@ -98,6 +98,21 @@ function coachView() {
   on('back', settingsView); on('back2', settingsView); on('creply', () => openNote('trainer'));
 }
 
+// ---------- What's new (changelog.json, fetched only when opened) ----------
+const newsUnread = () => { const v = LS.get('latestNews', null) || APP_VERSION; return !!v && LS.get('newsSeen', null) !== v; };
+function gearDot() { const g = document.getElementById('gear'); if (g) g.classList.toggle('dot', newsUnread()); }
+async function newsView() {
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>✨ What's new</h2></div><div class="card" id="newsList"><p class="dim">Loading…</p></div>`);
+  on('back2', settingsView);
+  try {
+    const j = await (await fetch('../changelog.json?t=' + Date.now(), { cache: 'no-store' })).json();
+    const es = j.entries || [];
+    if (es[0]) { LS.set('latestNews', es[0].version); LS.set('newsSeen', es[0].version); gearDot(); }
+    const el = document.getElementById('newsList'); if (!el) return;
+    el.innerHTML = es.map(e => `<div class="exrow" style="display:block"><h3 style="margin:4px 0 6px">${esc(new Date(e.date + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }))}</h3><ul style="margin:0 0 6px;padding-left:26px;font-size:22px;line-height:1.4">${(e.items || []).map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('') || '<p class="dim">Nothing yet.</p>';
+  } catch (e) { const el = document.getElementById('newsList'); if (el) el.innerHTML = '<p class="dim">Couldn\'t load the list. Try again in a moment.</p>'; }
+}
+
 function queue(sheet, row, lazy) { outbox.push({ sheet, row }); LS.set('outbox', outbox); setSync(); if (!lazy) flush(); }
 let flushing = false;
 async function flush() {
@@ -996,7 +1011,7 @@ function settingsView() {
       Sheet script: <b>${!S ? 'not loaded yet' : S.person ? 'up to date (people-aware)' : 'old version, needs redeploy'}</b><br>
       Last plan load: ${lastLoad ? new Date(lastLoad).toLocaleString() : 'not this session'} · Waiting to save: ${outbox.length}<br>
       Last problem: ${LAST_ERR ? '<b>' + esc(LAST_ERR) + '</b>' : 'none'}
-    </div></div>
+    </div><button id="news" style="width:100%;margin-top:12px;text-align:left;display:flex;align-items:center;gap:10px">✨ What's new${newsUnread() ? '<i class="news-dot"></i>' : ''}<span style="margin-left:auto" class="dim">›</span></button></div>
     <button class="mt" id="back" style="width:100%">Back</button>`);
   on('ex', () => pickExercise(settingsView));
   on('body', () => bodyView());
@@ -1004,6 +1019,7 @@ function settingsView() {
   on('pickv', voicePicker);
   on('refresh', async () => { await loadState(); toast('Plan reloaded'); settingsView(); });
   on('coach', coachView);
+  on('news', newsView);
   on('share', async () => {
     const link = new URL('../michelle/', location.href).href + '#setup=' + btoa(JSON.stringify({ url: CFG.url, key: CFG.key })).replace(/\+/g, '-').replace(/\//g, '_');
     try { if (navigator.share) { await navigator.share({ title: 'Workout Buddy for Michelle', url: link }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
@@ -1635,7 +1651,7 @@ async function checkUpdate() {
   try {
     const v = (await (await fetch('../version.json?t=' + Date.now(), { cache: 'no-store' })).json()).version;
     if (!v) return;
-    if (!APP_VERSION) { APP_VERSION = v; return; }   // first check after load: remember what we're running
+    if (!APP_VERSION) { APP_VERSION = v; gearDot(); return; }   // first check after load: remember what we're running
     if (v === APP_VERSION) return;
     UPDATE_READY = v;
     if (!(sessionAlive() && SESSION.log.length) && !NOTE && /Good (morning|afternoon|evening)|Connect|Loading/.test($app.textContent)) applyUpdate();

@@ -1,0 +1,49 @@
+{
+ "entries": [
+  {
+   "date": "2026-11-21",
+   "version": "20261121163948",
+   "items": [
+    "What's new: this list, under Settings > About",
+    "Notes from your trainer show on the home screen, with Got it and Reply; all of them are under Settings > Trainer notes",
+    "If your watch sends workout calories on its own, the app no longer asks you to type them",
+    "Settings shows an About card: app version, whether the sheet is connected, last load and any problem"
+   ]
+  },
+  {
+   "date": "2026-11-20",
+   "version": "20261120234500",
+   "items": [
+    "Michelle has her own page and her own data",
+    "Tell trainer and Tell developer save your notes for Claude",
+    "Exercise list is split into Weights and Core, each with a skip-today switch",
+    "Spoken numbers like \"thirty six\" are heard correctly, even with a pause in the middle",
+    "The rep counter ticks at the end of each rep"
+   ]
+  },
+  {
+   "date": "2026-11-19",
+   "version": "2026-11-19",
+   "items": [
+    "Levels and XP from sets, push sets, records, quotas and streaks",
+    "Trainer voices: an AI coach or Josh's own recordings, picked in Settings",
+    "Pace callouts and a two-tone beat during sets; push sets tell you to max it out",
+    "Your weight changes on the exercise screen stick for the session, with the PowerBlock setup shown",
+    "Form tips rotate during sets and rest",
+    "Fewer spoken prompts and a more reliable mic"
+   ]
+  },
+  {
+   "date": "2026-11-18",
+   "version": "2026-11-18",
+   "items": [
+    "Body map: mark areas good, sore or hurt, with a check-in every two days",
+    "Push set: set 3, or the set that finishes your weekly quota, gets a number to beat",
+    "Weeks always run Monday to Sunday",
+    "Settings gear with Exercises, Body map, Voice prompts, Choose voice and Reload plan",
+    "Buttons answer to their spoken names",
+    "Landscape layout and clearer streak tile"
+   ]
+  }
+ ]
+}
