@@ -12,3 +12,6 @@ Home-gym workout app for Josh and Michelle. Follow the `josh-app-dev` skill for 
 - Voice packs in `voice/<pack>/`; Michelle defaults to the `josh` pack.
 - Every push: bump `version.json` so open apps reload to the new version.
 - Test before pushing: Playwright with the API stubbed via page.route at 390x844 and 820x1180 (see the josh-app-dev skill), and `node --check` plus a SpreadsheetApp mock for Code.gs.
+
+## Watch calories via iPhone shortcut (2026-11-21)
+- Settings key `Watch Calories`: `Ask` (default, keypad after "Watch is stopped") or `Shortcut`. With `Shortcut` the app skips the keypad and logs an Events `watch_calories` row with Reason `shortcut`; the iPhone "Log Watch Workout" shortcut (Apple Watch Workout ends automation) appends the workout straight to Food_Log Exercise with Source `Apple Watch`, EntryID `AW-<start yyyyMMddHHmm>`. Set it per person in the Settings tab (Person row) once that person's shortcut is confirmed working. No-watch flow unchanged.

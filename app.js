@@ -1501,10 +1501,18 @@ function endFlow() {
 function watchEnd(next) {
   if (SESSION && SESSION.noWatch) return noWatchCalories(next);
   if (setting('Watch Reminder', 'Yes') !== 'Yes') return next();
+  // 'Watch Calories' = Shortcut: the iPhone shortcut sends the watch workout straight to the Food Log, so don't ask
+  const auto = setting('Watch Calories', 'Ask') === 'Shortcut';
   // no spoken reminder: the screen is enough
-  screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>End your Apple Watch workout</h1><p class="dim" style="font-size:26px">Swipe right on the watch and tap End. Keep the summary showing for the next step.</p>
+  screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>End your Apple Watch workout</h1><p class="dim" style="font-size:26px">Swipe right on the watch and tap End.${auto ? ' Your iPhone sends the calories to your Food Log.' : ' Keep the summary showing for the next step.'}</p>
     <button class="go mt" id="ok" style="width:70%" data-say="stopped">Watch is stopped</button><div class="heard"></div></div>`, { yes: ok });
-  function ok() { event('watch_end', '', '', '', 'watch stopped'); caloriesScreen(next); }
+  function ok() {
+    event('watch_end', '', '', '', 'watch stopped');
+    if (!auto) return caloriesScreen(next);
+    const mins = SESSION ? Math.max(1, Math.round((Date.now() - SESSION.start) / 60000)) : '';
+    event('watch_calories', '', '', 'shortcut', `${mins} min, ${SESSION ? SESSION.log.length : 0} sets, sent by the watch shortcut`);
+    toast('Your watch sends the calories'); next();
+  }
   on('ok', ok);
 }
 // No watch: let the trainer estimate the calories from your watch history and this session's length, or skip
