@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Workout Buddy">
+<title>Workout Buddy · Michelle</title>
+</head>
+<body>
+<div id="top"><b>Workout Buddy</b><span class="sp"></span><span id="noteT" class="pill">💬 Tell trainer</span><span id="noteD" class="pill">🛠 Tell developer</span><span id="sync" class="pill">…</span><span id="gear" class="pill" style="font-size:22px;padding:2px 12px;cursor:pointer">⚙️</span><span id="micLbl">tap to use voice →</span><div id="mic" class="off" title="Voice"></div></div>
+<div id="noteBox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:50;padding:40px"></div>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+<script>window.WB_PERSON = 'Michelle';</script>
+<script>
+// Always load the newest app files (never a cached copy)
+(function () {
+  var t = Date.now(), d = document;
+  var css = d.createElement('link'); css.rel = 'stylesheet'; css.href = '../app.css?t=' + t; d.head.appendChild(css);
+  var js = d.createElement('script'); js.src = '../app.js?t=' + t; d.body.appendChild(js);
+})();
+</script>
+</body>
+</html>

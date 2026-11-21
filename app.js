@@ -1,0 +1,1599 @@
+'use strict';
+// Who this page is for: josh/index.html and michelle/index.html set window.WB_PERSON
+const PERSON = window.WB_PERSON || 'Josh';
+let APP_VERSION = null;                 // from version.json, bumped on every push
+// ---------- small helpers ----------
+const $app = document.getElementById('app');
+// Saved data on this device is kept per person (wb.<Person>.<key>)
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(`wb.${PERSON}.${k}`); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(`wb.${PERSON}.${k}`, JSON.stringify(v)); } catch {} }
+};
+// One-time move of Josh's data saved before people were split (keys were wb.<key>)
+(function migrateOldKeys() {
+  if (PERSON !== 'Josh') return;
+  try {
+    if (localStorage.getItem('wb.Josh.migrated')) return;
+    Object.keys(localStorage).filter(k => /^wb\.[^.]+$/.test(k) && !/^wb\.(Josh|Michelle)$/.test(k)).forEach(k => {
+      const nk = 'wb.Josh.' + k.slice(3);
+      if (localStorage.getItem(nk) == null) localStorage.setItem(nk, localStorage.getItem(k));
+    });
+    localStorage.setItem('wb.Josh.migrated', '1');
+  } catch {}
+})();
+const num = x => { const n = parseFloat(String(x ?? '').replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
+const pad = n => String(n).padStart(2, '0');
+const dstr = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const tstr = d => `${dstr(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const parseDate = s => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/); if (!m) return null; return new Date(+m[1], m[2] - 1, +m[3], +(m[4] || 12), +(m[5] || 0), +(m[6] || 0)); };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const HOUR = 3600e3, DAY = 24 * HOUR;
+function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2500); }
+
+// ---------- config & setup link ----------
+(function readSetupHash() {
+  const h = location.hash;
+  if (h.startsWith('#setup=')) {
+    try { const cfg = JSON.parse(atob(h.slice(7).replace(/-/g, '+').replace(/_/g, '/'))); if (cfg.url && cfg.key) LS.set('cfg', cfg); } catch {}
+    // keep the link in Safari so "Add to Home Screen" carries it; clear it once running from the Home Screen
+    if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) history.replaceState(null, '', location.pathname);
+  }
+})();
+let CFG = LS.get('cfg', null);
+
+// ---------- data ----------
+let S = LS.get('state', null);      // last state from the sheet
+let outbox = LS.get('outbox', []);  // rows not yet saved to the sheet
+let local = LS.get('local', { tempoChecked: {}, lastSideFlip: 0 });
+let lastLoad = 0;
+let SERVER_OLD = false;              // true until the people-aware sheet script is deployed
+
+async function api(body) {
+  const r = await fetch(CFG.url, { method: 'POST', body: JSON.stringify(Object.assign({ key: CFG.key, person: PERSON }, body)) });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || 'error');
+  return j;
+}
+async function loadState(quiet) {
+  if (!CFG) return;
+  try {
+    const st = await api({ action: 'state' });
+    if (!st.person && PERSON !== 'Josh') { SERVER_OLD = true; setSync(); return; }   // script not updated yet: never save her data as Josh's
+    SERVER_OLD = !st.person; S = st; LS.set('state', S); lastLoad = Date.now(); setSync(); if (!quiet) toast('Plan loaded'); flush();
+  }
+  catch (e) { setSync('offline'); if (!quiet) toast('Could not reach the sheet, using saved copy'); }
+}
+function queue(sheet, row, lazy) { outbox.push({ sheet, row }); LS.set('outbox', outbox); setSync(); if (!lazy) flush(); }
+let flushing = false;
+async function flush() {
+  if (flushing || !outbox.length || !CFG) return;
+  if (PERSON !== 'Josh' && (SERVER_OLD || !S || !S.person)) return;   // wait for the people-aware script
+  flushing = true;
+  try {
+    // feedback notes: one row object each, saved with the generic append
+    const fb = outbox.filter(o => o.sheet === 'Feedback');
+    if (fb.length && S && S.person) {
+      await api({ action: 'append', tab: 'Feedback', rows: fb.map(o => o.row) });
+      const ids = new Set(fb.map(o => o.row.EntryID));
+      outbox = outbox.filter(o => !(o.sheet === 'Feedback' && ids.has(o.row.EntryID)));
+      LS.set('outbox', outbox);
+    }
+    for (const sheet of ['Sets', 'Events', 'Progress']) {
+      const rows = outbox.filter(o => o.sheet === sheet).map(o => o.row);
+      if (!rows.length) continue;
+      await api({ action: 'append', sheet, rows });
+      const ids = new Set(rows.map(r => r[r.length - 1]));
+      // keep a local copy so counts stay right until the next full load
+      if (S) {
+        const key = sheet.toLowerCase();
+        S[key] = (S[key] || []).concat(rows.map(r => rowToObj(sheet, r)));
+      }
+      outbox = outbox.filter(o => !(o.sheet === sheet && ids.has(o.row[o.row.length - 1])));
+      LS.set('outbox', outbox); LS.set('state', S);
+    }
+    setSync();
+  } catch (e) { setSync('offline'); }
+  flushing = false;
+}
+setInterval(flush, 30000);
+function setSync(mode) {
+  const el = document.getElementById('sync');
+  if (mode === 'offline') { el.className = 'pill bad'; el.textContent = `Offline · ${outbox.length} saved here`; return; }
+  if (SERVER_OLD && PERSON !== 'Josh') { el.className = 'pill bad'; el.textContent = 'Setup not finished'; return; }
+  if (outbox.length) { el.className = 'pill warn'; el.textContent = `${outbox.length} waiting`; }
+  else { el.className = 'pill on'; el.textContent = 'Synced'; }
+}
+
+const SET_COLS = ['Date', 'Date Estimated', 'Day Type', 'Exercise', 'Set', 'Side', 'Weight (lb)', 'Reps', 'Next Time', 'Notes', 'Session ID', 'Logged At', 'Duration (s)', 'Reps Left', 'Felt Off', 'Tempo Fit', 'Source', 'Row ID'];
+const EV_COLS = ['Logged At', 'Session ID', 'Type', 'Exercise', 'Joint', 'Reason', 'Detail', 'Row ID'];
+const PR_COLS = ['Date', 'Type', 'Name', 'Detail', 'Row ID'];
+function rowToObj(sheet, r) { const cols = sheet === 'Sets' ? SET_COLS : sheet === 'Events' ? EV_COLS : PR_COLS; const o = {}; cols.forEach((c, i) => o[c] = String(r[i] ?? '')); return o; }
+
+// All sets: sheet + not-yet-synced
+function allSets() {
+  const base = (S && S.sets) || [];
+  const have = new Set(base.map(s => s['Row ID']).filter(Boolean));
+  const pend = outbox.filter(o => o.sheet === 'Sets' && !have.has(o.row[17])).map(o => rowToObj('Sets', o.row));
+  return base.concat(pend).map(s => ({
+    date: s['Date'], ex: s['Exercise'], side: s['Side'] || 'Both', weight: num(s['Weight (lb)']), reps: num(s['Reps']),
+    rir: s['Reps Left'], off: s['Felt Off'] === 'Yes', session: s['Session ID'], set: num(s['Set']), dur: num(s['Duration (s)']), est: s['Date Estimated'] === 'Yes',
+    t: parseDate(s['Logged At']) || parseDate(s['Date'])
+  })).filter(s => s.t && (s.reps != null || s.weight != null));
+}
+function allEvents() {
+  const base = (S && S.events) || [];
+  const have = new Set(base.map(s => s['Row ID']).filter(Boolean));
+  const pend = outbox.filter(o => o.sheet === 'Events' && !have.has(o.row[7])).map(o => rowToObj('Events', o.row));
+  return base.concat(pend).filter(e => e['Type'] !== 'voice').map(e => ({ t: parseDate(e['Logged At']), type: e['Type'], ex: e['Exercise'], joint: e['Joint'], reason: e['Reason'], detail: e['Detail'] })).filter(e => e.t);
+}
+const setting = (k, d) => { const v = S && S.settings ? S.settings[k] : undefined; if (v === undefined || v === '') return d; const n = num(v); return (typeof d === 'number' && n != null) ? n : v; };
+
+// Joints each exercise loads (used for the hurt-joint check)
+const JOINTS = {
+  'Squats': ['Knee', 'Back', 'Hip'], 'Single Arm Row': ['Shoulder', 'Elbow', 'Back'], 'Incline Bench Press': ['Shoulder', 'Elbow', 'Wrist'],
+  'Lateral Shoulder Raise': ['Shoulder'], 'Tricep Kickback': ['Elbow', 'Shoulder'], 'Sup Dumbbell Curls': ['Elbow', 'Wrist'],
+  'DB Over Press': ['Shoulder', 'Elbow', 'Wrist'], 'Leg Raises': ['Back', 'Hip'], 'Reverse Crunch': ['Back'], 'Plank Hip Dip': ['Shoulder', 'Back'],
+  'Mountain Climbers': ['Shoulder', 'Wrist', 'Hip'], 'Dead Bug': ['Back'], 'Heel Tap': ['Back', 'Neck']
+};
+
+function exercises() {
+  return ((S && S.exercises) || []).filter(e => e['Active'] === 'Yes').map(e => ({
+    name: e['Exercise'], type: e['Day Type'], muscle: e['Primary Muscle'], oneSide: e['One Side'] === 'Yes',
+    quota: num(e['Weekly Quota']) ?? setting('Default Weekly Quota', 6), repMin: num(e['Rep Min']) ?? 12, repMax: num(e['Rep Max']) ?? 15,
+    target: num(e['Target Set (s)']) ?? 45, tempo: e['Tempo'] || 'Even', spr: num(e['Sec per Rep']) ?? 3,
+    equip: e['Equipment'] || '', starts: e['Starts'] || '', setup: e['Setup'] || '', cue: e['Form Cue'] || '', order: num(e['Order']) ?? 50,
+    hold: num(e['Pause at Turn (s)']),
+    tips: String(e['Form Tips'] || '').split('|').map(t => t.trim()).filter(Boolean),
+    joints: (e['Joints'] ? e['Joints'].split(/,\s*/) : JOINTS[e['Exercise']]) || []
+  })).sort((a, b) => a.order - b.order);
+}
+const exByName = n => exercises().find(e => e.name === n);
+const NAME_SAY = { 'Squats': 'squats', 'Single Arm Row': 'row', 'Incline Bench Press': 'incline', 'Lateral Shoulder Raise': 'lateral', 'Tricep Kickback': 'kickback', 'Sup Dumbbell Curls': 'curls', 'DB Over Press': 'press', 'Leg Raises': 'leg', 'Reverse Crunch': 'crunch', 'Plank Hip Dip': 'plank', 'Mountain Climbers': 'climbers', 'Dead Bug': 'bug', 'Heel Tap': 'heel' };
+const planFor = n => ((S && S.plan) || []).find(p => p['Exercise'] === n);
+
+// Week math (week starts Monday)
+function weekStart(d = new Date()) { const x = new Date(d); x.setHours(0, 0, 0, 0); const dow = (x.getDay() + 6) % 7; x.setDate(x.getDate() - dow); return x; }
+const counts = s => s.side !== 'Left' && s.reps != null;   // a right+left pair is one set; planned-only rows don't count
+function isPushSet(s, sets, ex) {
+  if ((s.set || 0) >= 3) return true;
+  const ws = weekStart(s.t), wk = sets.filter(x => x.ex === s.ex && counts(x) && weekStart(x.t).getTime() === ws.getTime()).sort((a, b) => a.t - b.t);
+  const me = counts(s) ? s : wk.find(x => x.session === s.session && x.set === s.set);   // left row → its right partner
+  return !!me && wk.indexOf(me) === ex.quota - 1;
+}
+function doneThisWeek(name, sets) { const ws = weekStart(); return sets.filter(s => s.ex === name && s.t >= ws && counts(s)).length; }
+function muscleLoad24(muscle, sets) { const since = Date.now() - DAY; const names = new Set(exercises().filter(e => e.muscle === muscle).map(e => e.name)); return sets.filter(s => names.has(s.ex) && s.t.getTime() >= since && counts(s)); }
+function step(w) { return w < setting('Small Step Below (lb)', 30) ? setting('Small Weight Step (lb)', 2.5) : setting('Large Weight Step (lb)', 5); }
+const roundTo = (w, st) => Math.round(w / st) * st;
+
+// Weight for the next set: trainer's plan first, then simple fallback rules
+function weightFor(ex, sets) {
+  if (ex.type === 'Core') return { w: null, why: 'bodyweight' };
+  const p = planFor(ex.name), pw = p && num(p['Weight (lb)']);
+  const mine = sets.filter(s => s.ex === ex.name && s.weight != null).sort((a, b) => a.t - b.t);
+  const last = mine[mine.length - 1];
+  // plan is newer than my last set → use it
+  const planAt = p && parseDate(p['Updated At']);
+  if (pw != null && (!last || !planAt || planAt >= last.t)) return { w: pw, why: 'plan' };
+  if (!last) return pw != null ? { w: pw, why: 'plan' } : { w: null, why: 'no history yet' };
+  const days = (Date.now() - last.t) / DAY;
+  if (days > 21) {
+    const cut = Math.min(0.2, 0.1 * Math.floor(days / 21));
+    const w = Math.max(step(last.weight), roundTo(last.weight * (1 - cut), step(last.weight)));
+    return { w, why: `layoff (${Math.round(days)} days)` };
+  }
+  const sess = mine.filter(s => s.session === last.session && s.weight === last.weight && s.reps != null);
+  // pacing sets hold back; only a push set (set 3, or the week's last quota set) tests the weight
+  const lastSet = sess[sess.length - 1];
+  const allTop = lastSet && isPushSet(lastSet, mine, ex) && lastSet.reps >= ex.repMax && !sess.some(s => s.off) && sess.every(s => s.reps >= ex.repMin);
+  if (allTop) return { w: last.weight + step(last.weight), why: 'hit top of range' };
+  return { w: last.weight, why: 'same as last time' };
+}
+const fmtW = w => w == null ? 'Bodyweight' : `${+w.toFixed(1)} lb`;
+
+// Is the exercise waiting on a hurt joint?
+// Body areas. "joint" is the generic name exercises use (see JOINTS); left and right are tracked separately.
+const REGIONS = [
+  { id: 'neck', label: 'Neck', joint: 'Neck' },
+  { id: 'shR', label: 'Right shoulder', joint: 'Shoulder' }, { id: 'shL', label: 'Left shoulder', joint: 'Shoulder' },
+  { id: 'elR', label: 'Right elbow', joint: 'Elbow' }, { id: 'elL', label: 'Left elbow', joint: 'Elbow' },
+  { id: 'wrR', label: 'Right wrist', joint: 'Wrist' }, { id: 'wrL', label: 'Left wrist', joint: 'Wrist' },
+  { id: 'ub', label: 'Upper back', joint: 'Back' }, { id: 'lb', label: 'Lower back', joint: 'Back' },
+  { id: 'hpR', label: 'Right hip', joint: 'Hip' }, { id: 'hpL', label: 'Left hip', joint: 'Hip' },
+  { id: 'knR', label: 'Right knee', joint: 'Knee' }, { id: 'knL', label: 'Left knee', joint: 'Knee' }
+];
+const STATUS_COLOR = { good: '#38c172', sore: '#f5b53d', hurt: '#ef5350' };
+// Latest status per area: body_status events, plus older joint_flag / joint_clear rows (which applied to both sides)
+function bodyStatus(evs) {
+  const st = {}; REGIONS.forEach(r => st[r.label] = { status: 'good', t: null });
+  evs.slice().sort((a, b) => a.t - b.t).forEach(e => {
+    if (e.type === 'body_status' && st[e.joint]) st[e.joint] = { status: e.reason || 'good', t: e.t };
+    if (e.type === 'joint_flag' || e.type === 'joint_clear') REGIONS.filter(r => r.joint === e.joint).forEach(r => st[r.label] = { status: e.type === 'joint_flag' ? 'hurt' : 'good', t: e.t });
+  });
+  return st;
+}
+function setBody(label, status, why) { event('body_status', CUR ? CUR.name : '', label, status, why || ''); }
+// For one exercise: hurt areas (ask first), sore areas (lighter first set), and whether you said "wait" recently
+function jointState(ex, evs) {
+  const bs = bodyStatus(evs), mine = REGIONS.filter(r => ex.joints.includes(r.joint));
+  const hurt = mine.filter(r => bs[r.label].status === 'hurt').map(r => r.label);
+  const sore = mine.filter(r => bs[r.label].status === 'sore').map(r => r.label);
+  if (!hurt.length && !sore.length) return null;
+  const recheck = setting('Injury Recheck (h)', 48) * HOUR;
+  const waited = hurt.length > 0 && evs.some(e => e.type === 'joint_wait' && e.ex === ex.name && Date.now() - e.t < recheck);
+  return { joints: hurt, sore, waiting: waited };
+}
+
+// ---------- what's next ----------
+// Skip a whole group (Weights or Core) for the rest of today
+const typeSkipped = t => !!(local.skipType && local.skipType[t] === dstr(new Date()));
+function setTypeSkip(t, on) { local.skipType = local.skipType || {}; if (on) local.skipType[t] = dstr(new Date()); else delete local.skipType[t]; LS.set('local', local); }
+function whatsNext(opts = {}) {
+  const sets = allSets(), evs = allEvents();
+  const maxM = setting('Max Sets per Muscle per 24h', 3);
+  // The week is always Monday to Sunday. Pace is judged through yesterday: by Wednesday, 2 of 7 days' share is expected.
+  const dayIdx = (new Date().getDay() + 6) % 7;   // Monday = 0
+  const exs = exercises();
+  const info = exs.map(ex => {
+    const done = doneThisWeek(ex.name, sets);
+    const expected = ex.quota * dayIdx / 7;
+    const mload = muscleLoad24(ex.muscle, sets).length;
+    const js = jointState(ex, evs);
+    return { ex, done, expected, deficit: expected - done, remaining: ex.quota - done, mload, room: maxM - mload, js };
+  });
+  const skip = new Set(opts.exclude || []);
+  const ok = info.filter(i => !skip.has(i.ex.name) && !typeSkipped(i.ex.type) && i.room > 0 && !(i.js && i.js.waiting));
+  const need = ok.filter(i => i.remaining > 0);
+  const cur = SESSION && SESSION.lastEx;
+  let pick = null, extra = false;
+  if (need.length) {
+    const same = cur && need.find(i => i.ex.name === cur && (SESSION.countBy[cur] || 0) < 3);
+    if (same && !opts.moveOn) pick = same;
+    else {
+      const type = SESSION && SESSION.type;
+      need.sort((a, b) => (type && (a.ex.type === type) !== (b.ex.type === type) ? (a.ex.type === type ? -1 : 1) : 0) || (b.deficit - a.deficit) || (a.ex.order - b.ex.order));
+      pick = need.find(i => i.ex.name !== cur || !opts.moveOn) || need[0];
+    }
+  } else if (ok.length) {
+    ok.sort((a, b) => (a.done / a.ex.quota) - (b.done / b.ex.quota));
+    pick = ok[0]; extra = true;
+  }
+  const totQ = info.reduce((a, i) => a + i.ex.quota, 0), totD = info.reduce((a, i) => a + Math.min(i.done, i.ex.quota), 0);
+  const totE = info.reduce((a, i) => a + i.expected, 0);
+  const diff = Math.round(totD - totE);
+  const pace = diff <= -3 ? { cls: 'warn', text: `Behind pace by ${-diff} sets` } : diff >= 4 ? { cls: 'ok', text: `Ahead by ${diff} sets, room for more` } : { cls: 'ok', text: 'On pace' };
+  return { pick, extra, info, totQ, totD, pace, sets, evs };
+}
+
+// ---------- voice ----------
+const V = { rec: null, on: false, want: false, speaking: false, handlers: null, prev: [], lastWordAt: 0, utt: [], timer: null, ttsWords: new Set(), screenAt: 0 };
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const NUMW = { zero: 0, none: 0, one: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, 'twenty-one': 21, 'twenty-two': 22, 'twenty-three': 23, 'twenty-four': 24, 'twenty-five': 25, thirty: 30, forty: 40, fifty: 50, sixty: 60 };
+const SAY = {
+  ready: /^(ready|go|let'?s go|start|i'?m ready|begin|redi)$/,
+  done: /^(done|dun|dunn|dona|don|finished|that'?s it|stop set)$/,
+  next: /^(what'?s next|what is next|next|whats next)$/,
+  skip: /^(skip|skip it|skip this|pass)$/,
+  yes: /^(yes|yeah|yep|ok|okay|good|sure|running|watch running|it'?s running|correct|save|right)$/,
+  no: /^(no|nope|wait|not now|later)$/,
+  end: /^(end|end session|i'?m done|finish|all done|stop workout)$/
+};
+function voiceStart(why) {
+  if (!SR) { toast('Voice not available here'); return; }
+  V.want = true;
+  if (V.on) return;
+  try { V.rec && V.rec.abort(); } catch {}
+  const r = new SR(); V.rec = r;
+  r.lang = 'en-US'; r.continuous = true; r.interimResults = true;
+  if (document.getElementById('clock')) {
+    let a = false, snd = false;
+    r.onaudiostart = () => { if (!a) { a = true; vlog('', 'set screen: mic audio flowing'); } };
+    r.onsoundstart = () => { if (!snd) { snd = true; vlog('', 'set screen: sound detected'); } };
+  }
+  r.onstart = () => { V.on = true; V.needTap = false; V.prev = []; V.startedAt = Date.now(); micUI(); if (!V.quickStops) vlog('', 'mic on' + (why ? ' (' + why + ')' : '')); };
+  r.onresult = e => {
+    let text = '';
+    for (let i = 0; i < e.results.length; i++) text += ' ' + e.results[i][0].transcript;
+    const words = text.toLowerCase().replace(/[.,!?+]/g, ' ').trim().split(/\s+/).filter(Boolean);
+    // new words = everything after the part we already saw (Safari sometimes rewrites earlier words)
+    const oldLen = V.prev.length;
+    let k = 0; while (k < oldLen && k < words.length && V.prev[k] === words[k]) k++;
+    let fresh = words.slice(k);
+    const revised = k < oldLen;                 // Safari changed a word we already had
+    V.prev = words;
+    if (V.speaking) fresh = fresh.filter(w => !V.ttsWords.has(w));   // drop our own spoken prompt
+    // a new screen only listens to fresh speech: ignore words in its first moment, and rewrites of words said before it
+    if (Date.now() - V.screenAt < 1200) return;
+    if (revised && !V.utt.length) return;
+    if (!fresh.length) return;
+    const now = Date.now();
+    if (now - V.lastWordAt > 900 && !revised) V.utt = [];   // a pause starts a new phrase
+    V.utt = revised ? V.utt.slice(0, Math.max(0, V.utt.length - (oldLen - k))).concat(fresh) : V.utt.concat(fresh);
+    V.lastWordAt = now;
+    V.recent = (V.recent || []).filter(r => now - r.t < 4000).concat(fresh.map(w => ({ w, t: now })));
+    document.querySelectorAll('.heard').forEach(h => h.textContent = '“' + V.utt.join(' ') + '”');
+    clearTimeout(V.timer);
+    V.timer = setTimeout(() => decide(V.utt.slice()), 450);  // short wait to see if more words follow
+  };
+  r.onerror = e => {
+    if (e.error !== 'no-speech' && e.error !== 'aborted') vlog('', 'mic error: ' + e.error);
+    if (e.error === 'audio-capture') V.audioLost = true;   // iPad took the mic away (often after a beep or spoken prompt)
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; V.needTap = true; micUI(); }
+  };
+  r.onend = () => {
+    V.on = false; micUI();
+    if (V.restarting || V.paused) return;  // our own restart after a prompt, or paused while the set's pacing audio plays
+    const ran = V.startedAt ? Date.now() - V.startedAt : 0; V.startedAt = 0;
+    if (V.audioLost) {                     // lost the mic: get it back quickly, and don't count it as a failure
+      V.audioLost = false; vlog('', `mic lost after ${Math.round(ran / 1000)}s, restarting`);
+      if (V.want) setTimeout(() => { try { voiceStart('after mic loss'); } catch {} }, 700);
+      return;
+    }
+    if (ran < 3000) V.quickStops = (V.quickStops || 0) + 1; else { if (V.quickStops) vlog('', `mic had ${V.quickStops} quick stops`); V.quickStops = 0; vlog('', `mic stopped after ${Math.round(ran / 1000)}s`); }
+    if (V.quickStops >= 4) {               // it keeps failing: stop retrying until the mic badge is tapped
+      vlog('', 'mic keeps stopping, waiting for a tap'); V.want = false; V.quickStops = 0;
+      micUI(); return;
+    }
+    if (V.want && !talking()) setTimeout(() => { try { voiceStart('auto restart'); } catch (err) { vlog('', 'restart failed: ' + err.message); } }, 300);
+  };
+  try { r.start(); } catch (err) { vlog('', 'start failed: ' + err.message); }
+}
+// if the mic quietly dropped, bring it back
+const talking = () => V.speaking || ('speechSynthesis' in window && speechSynthesis.speaking);
+setInterval(() => { if (V.want && !V.on && !V.paused && !V.restarting && !talking()) voiceStart('watchdog'); }, 4000);
+// While the beat and callouts play during a set, the iPad can't listen reliably, so the mic pauses and comes back after
+function micPause() { if (V.paused) return; V.paused = true; try { V.rec && V.rec.abort(); } catch {} V.on = false; micUI(); }
+// The iPad can leave the mic deaf while the sound engine is active, so put the sound engine to sleep before listening again
+function micResume(why) {
+  if (!V.paused) return; V.paused = false; V.quickStops = 0;
+  const st = actx ? actx.state : 'none';
+  const tts = 'speechSynthesis' in window ? (speechSynthesis.speaking ? 'speaking' : speechSynthesis.pending ? 'pending' : 'idle') : 'none';
+  try { if (actx && actx.state === 'running') actx.suspend(); } catch {}
+  try { if (tts !== 'idle' && tts !== 'none') speechSynthesis.cancel(); } catch {}   // a stuck speech engine also holds the mic
+  clearTimeout(V.coT); V.speaking = false;
+  vlog('', `pacing done: callouts spoken ${V.coSpoken || 0} of ${V.coAsked || 0}, speech ${tts}, sound engine ${st}`);
+  V.coSpoken = 0; V.coAsked = 0;
+  if (!V.want) { micUI(); return; }
+  // Sets with spoken callouts always heard "done"; sets with only beeps came back deaf. A short silent utterance
+  // resets the iPad's audio mode the same way a callout does, then the mic starts.
+  let started = false;
+  const go = how => { if (started) return; started = true; clearTimeout(V.rsT); vlog('', 'audio reset: ' + how); setTimeout(() => voiceStart(why || 'after pacing'), 300); };
+  try {
+    const u = new SpeechSynthesisUtterance('.'); u.volume = 0; u.rate = 2;
+    u.onend = () => go('speech ok'); u.onerror = () => go('speech error');
+    setTimeout(() => speechSynthesis.speak(u), 250);
+  } catch { go('no speech'); }
+  V.rsT = setTimeout(() => go('timeout'), 2000);
+}
+function voiceStop() { V.want = false; try { V.rec && V.rec.stop(); } catch {} micUI(); }
+// Voice status square: live mic when listening, mic with a no-sign when off (red) or paused for the set's pacing (gray)
+const MIC_SVG = '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" fill="currentColor"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M8.5 21h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>';
+const NO_SVG = '<circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4.6 4.6l14.8 14.8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>';
+function micUI() {
+  const el = document.getElementById('mic'); if (!el) return;
+  const state = V.on ? 'live' : V.paused ? 'paused' : 'off';
+  if (el.dataset.state !== state) { el.dataset.state = state; el.className = state; el.innerHTML = `<svg viewBox="0 0 24 24">${state === 'live' ? MIC_SVG : `<g transform="translate(4.2 4.2) scale(.65)">${MIC_SVG}</g>${NO_SVG}`}</svg>`; }
+  // the trainer voice only works after a tap on this page load (e.g. after the app updates itself), so ask for one
+  const lbl = document.getElementById('micLbl');
+  if (lbl) {
+    const needTapForVoice = !V.ttsUnlocked && LS.get('talk', true);
+    lbl.textContent = state === 'off' ? 'tap to use voice →' : 'tap once for trainer voice →';
+    lbl.classList.toggle('show', (state === 'off' && SCREEN_IS_HOME) || needTapForVoice);
+  }
+}
+var SCREEN_IS_HOME = false;
+// Safari only lets the mic restart after a tap: any tap on the page brings it back if it dropped
+document.addEventListener('click', () => { if (!V.paused && (V.needTap || (V.want && !V.on)) && SR) { V.needTap = false; V.quickStops = 0; voiceStart('tap'); } }, true);
+// right after a beep or spoken prompt, make sure the mic is still running
+function micCheckSoon() { setTimeout(() => { if (V.want && !V.on && !V.paused && !talking()) voiceStart('after sound'); }, 600); }
+// After the app speaks, iPadOS can silently cut the mic while it still looks on: restart it outright
+function micRestartAfterSpeech() {
+  if (!V.want || V.paused) return;
+  if (!V.rec) { voiceStart('after prompt'); return; }
+  V.restarting = true;
+  try { V.rec.abort(); } catch {}
+  setTimeout(() => { V.restarting = false; V.on = false; voiceStart('after prompt'); }, 350);
+}
+document.getElementById('mic').onclick = () => { unlockAudio(); V.quickStops = 0; V.on ? voiceStop() : voiceStart('tap'); };
+// Words the iPad often mishears, mapped to what was meant (only for commands, never note text)
+const ALIAS = { though: 'go', dough: 'go', safe: 'save', saved: 'save', belt: 'felt', outright: 'right', fast: 'faster', watching: 'watch', develop: 'developer', redy: 'ready' };
+const PHRASE_ALIAS = { 'in session': 'end session', 'and session': 'end session', 'felt right right': 'felt right' };
+const FILLER = new Set(['uh', 'um', 'umm', 'hmm', 'so', 'and', 'the', 'oh', 'ah', 'like', 'please', 'now']);
+// Command words that count on their own inside a short phrase ("ready ready ready", "okay go")
+const WORD = { ready: /^(ready|go|start|begin|redi)$/, done: /^(done|dun|dunn|dona|don|finished|finish)$/, skip: /^skip$/, yes: /^(yes|yeah|yep|okay|ok|running|good|save|sure)$/, no: /^(no|nope|wait|later)$/, next: /^next$/ };
+function decide(utt) {
+  const heard = utt.join(' ');
+  if (!utt.length) return;
+  if (!V.handlers && !Object.keys(SAYMAP).length) return vlog(heard, 'ignored: nothing to do on this screen');
+  // collapse repeats and fillers: "ready ready ready" → "ready"
+  const toks = utt.filter(w => !FILLER.has(w)).filter((w, i, a) => i === 0 || w !== a[i - 1]);
+  const uniq = [...new Set(toks)];
+  // "tell my trainer ..." / "tell my developer ..." work on any screen; anything said after it starts the note
+  const NOTE_RE = /\b(?:tell|note for|message) (?:my |the )?(trainer|coach|developer|develop|dev)\b(.*)$/;
+  const all = utt.join(' '), win0 = (V.recent || []).map(r => r.w).join(' ');
+  const m = all.match(NOTE_RE) || (/^(trainer|coach|developer|develop|dev)$/.test(all.trim()) && win0.match(NOTE_RE));   // "tell" … "developer" heard as two phrases
+  if (m && !NOTE) { V.utt = []; V.recent = []; vlog(heard, 'opened note: ' + m[1]); openNote(/trainer|coach/.test(m[1]) ? 'trainer' : 'developer', m[1] === all.trim() ? '' : (m[2] || '').trim()); return; }
+  if (NOTE && V.customDecide) { const did = V.customDecide(utt); V.utt = []; return vlog(heard, 'did: ' + did); }
+  if (uniq.length > 4) return vlog(heard, 'ignored: sounded like talking');
+  // fix common mishearings for command matching
+  for (let i = 0; i < toks.length; i++) if (ALIAS[toks[i]]) toks[i] = ALIAS[toks[i]];
+  // "tricep kick back" must not press Back: join split exercise words first
+  for (let i = 0; i < toks.length - 1; i++) if (toks[i] === 'kick' && /^backs?$/.test(toks[i + 1])) toks.splice(i, 2, 'kickback');
+  // a lone "back" only counts when it's the whole phrase (or "go back")
+  if (toks.includes('back') && toks.length > 1 && !(toks.length === 2 && toks[0] === 'go')) toks.splice(toks.indexOf('back'), 1);
+  { const pa = PHRASE_ALIAS[toks.join(' ')]; if (pa) toks.splice(0, toks.length, ...pa.split(' ')); }
+  uniq.splice(0, uniq.length, ...new Set(toks));
+  const h = V.handlers || {}, phrase = toks.join(' ');
+  // button words first (save/skip/clear), then a screen's own number parser
+  if (V.customDecide) {
+    const k = uniq.length <= 2 && Object.keys(SAYMAP).find(x => uniq.includes(x));
+    if (k) { V.utt = []; vlog(heard, 'pressed: ' + k); SAYMAP[k].click(); return; }
+    const did = V.customDecide(toks); if (did) { V.utt = []; return vlog(heard, 'did: ' + did); }
+  }
+  const fire = (k, fn) => { V.utt = []; if (V.speaking) try { speechSynthesis.cancel(); } catch {} vlog(heard, 'did: ' + k); fn(); };
+  for (const k of Object.keys(SAY)) if (h[k] && SAY[k].test(phrase)) return fire(k, h[k]);
+  if (uniq.length <= 3) for (const w of uniq) for (const k of Object.keys(WORD)) if (h[k] && WORD[k].test(w)) return fire(k, h[k]);
+  // a button's phrase ("get started"), matched across your last few seconds so a split phrase still counts
+  const press = k => { const b = SAYMAP[k]; V.utt = []; V.recent = []; vlog(heard, 'pressed: ' + k); if (V.speaking) try { speechSynthesis.cancel(); } catch {} b.click(); };
+  const win = ' ' + (V.recent || []).map(r => r.w).join(' ') + ' ', said = ' ' + toks.join(' ') + ' ';
+  const phrases = Object.keys(SAYMAP).filter(k => k.includes(' ')).sort((a, b) => b.length - a.length);
+  const ph = phrases.find(k => said.includes(' ' + k + ' ')) || phrases.find(k => win.includes(' ' + k + ' '));
+  if (ph) return press(ph);
+  // or its one-word shortcut ("started")
+  if (uniq.length <= 3) { const k = Object.keys(SAYMAP).find(x => !x.includes(' ') && uniq.includes(x)); if (k) return press(k); }
+  if (h.number) {
+    for (let i = toks.length - 1; i >= 0; i--) {
+      const w = toks[i]; let n = /^\d+$/.test(w) ? +w : NUMW[w];
+      // "thirty six" in one phrase: join a tens word with the digit after it
+      if (n != null && n < 10 && i > 0) { const p = toks[i - 1], pn = /^\d+$/.test(p) ? +p : NUMW[p]; if (pn >= 20 && pn % 10 === 0) n += pn; }
+      if (n != null && uniq.length <= 3) { V.utt = []; vlog(heard, 'did: number ' + n); return h.number(n, w); }
+    }
+  }
+  vlog(heard, 'ignored: no match for this screen (' + Object.keys(h).concat(Object.keys(SAYMAP)).join('/') + ')');
+}
+
+// Underline the word you can say on each button, and let saying it press the button
+const SAY_STOP = new Set(['too', 'a', 'an', 'the', "it's", 'its', 'i', 'my', 'this', 'that', 'felt', 'not', 'out', 'of', 'on', 'it', 'is', 'for', 'to', 'now', 'or', 'and', 'with']);
+let SAYMAP = {};
+function annotate() {
+  SAYMAP = {};
+  $app.querySelectorAll('button').forEach(b => {
+    // undo any earlier underline so the button's words are plain text again
+    b.querySelectorAll('span.say').forEach(sp => sp.replaceWith(document.createTextNode(sp.textContent)));
+    b.normalize();
+    if (b.dataset.say === '-') return;
+    const textNode = [...b.childNodes].find(n => n.nodeType === 3 && /[a-z]/i.test(n.textContent));
+    const ds = (b.dataset.say || '').toLowerCase().trim();
+    const words = textNode ? (textNode.textContent.toLowerCase().match(/[a-z']+/g) || []) : [];
+    // the natural phrase to say: a multi-word data-say, else the button's own words (up to 4, else the first 3)
+    const phrase = ds.includes(' ') ? ds : (words.length && words.length <= 4 ? words.join(' ') : words.slice(0, 3).join(' '));
+    // a one-word shortcut: a single-word data-say, else the first meaningful word
+    const key = ds && !ds.includes(' ') ? ds : (ds.includes(' ') ? '' : (words.find(w => !SAY_STOP.has(w) && w.length > 1) || ''));
+    if (phrase && phrase.includes(' ') && !SAYMAP[phrase]) SAYMAP[phrase] = b;
+    if (key && !SAYMAP[key]) SAYMAP[key] = b;
+    let show = phrase && phrase.includes(' ') ? phrase : key;
+    if (textNode && show && textNode.textContent.toLowerCase().indexOf(show) < 0) show = key;   // e.g. "Keep 30 lb": underline just "Keep"
+    if (textNode && show) {
+      const t = textNode.textContent, i = t.toLowerCase().indexOf(show);
+      if (i >= 0) {
+        const span = document.createElement('span');
+        span.className = 'say'; span.textContent = t.slice(i, i + show.length);
+        const frag = document.createDocumentFragment();
+        frag.append(t.slice(0, i), span, t.slice(i + show.length));
+        textNode.replaceWith(frag);
+      }
+    }
+  });
+}
+// Voice log: one row per phrase heard and what the app did, kept in the Events tab (Type = voice)
+let SCREEN = '';
+function vlog(heard, action) {
+  try { queue('Events', [tstr(new Date()), SESSION ? SESSION.id : '', 'voice', SCREEN, '', action, heard, uid()], true); } catch {}
+}
+// Pick the most natural installed English voice: your saved choice, else Premium, then Enhanced, then the default
+const NOVELTY = /eloquence|bahh|novelty|bad news|bells|boing|bubbles|cellos|whisper|zarvox|trinoids|organ|superstar|jester|wobble|albert|fred|junior|ralph|good news|hysterical|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley|deranged|pipe/i;
+function voices() { try { return speechSynthesis.getVoices().filter(v => /^en[-_]/i.test(v.lang) && !NOVELTY.test(v.name + ' ' + v.voiceURI)); } catch { return []; } }
+function voiceScore(v) { const n = v.name + ' ' + v.voiceURI; return (/premium/i.test(n) ? 100 : /enhanced/i.test(n) ? 50 : 0) + (/en[-_]US/i.test(v.lang) ? 5 : 0) + (/compact|eloquence|novelty|bad news|bells|boing|bubbles|cellos|whisper|zarvox|trinoids|organ|superstar|jester|wobble|albert|fred|junior|ralph/i.test(n) ? -200 : 0); }
+function bestVoice() {
+  const vs = voices(); const want = LS.get('voice', '');
+  if (want === 'system') return null;            // let iPadOS pick (may use the Settings voice)
+  return vs.find(v => v.voiceURI === want) || vs.slice().sort((a, b) => voiceScore(b) - voiceScore(a))[0] || null;
+}
+try { speechSynthesis.onvoiceschanged = () => {}; speechSynthesis.getVoices(); } catch {}
+function speak(text) {
+  if (!('speechSynthesis' in window) || !LS.get('talk', true)) return;
+  try {
+    speechSynthesis.cancel();
+    const parts = Array.isArray(text) ? text : [text], all = parts.join(' ');   // an array is spoken as separate sentences with a pause between
+    const bv = bestVoice();
+    V.speaking = true; V.ttsWords = new Set(all.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
+    let ended = false;
+    const fin = () => { if (ended) return; ended = true; clearTimeout(V.spkT); setTimeout(() => { V.speaking = false; }, 250); micRestartAfterSpeech(); };
+    clearTimeout(V.spkT); V.spkT = setTimeout(fin, 1500 + all.length * 80 + parts.length * 400);   // iPad sometimes never fires onend
+    parts.forEach((t, i) => {
+      const u = new SpeechSynthesisUtterance(t); u.rate = 1.0;
+      if (bv) { u.voice = bv; u.lang = bv.lang; }
+      if (i === parts.length - 1) u.onend = u.onerror = fin;
+      speechSynthesis.speak(u);
+    });
+  } catch {}
+}
+// Short trainer callouts during a set ("Down!" "Up!"). They don't restart the mic after each word, only once after a burst.
+function callout(word) {
+  if (!LS.get('talk', true)) return;
+  const ck = CALLOUT_KEY[word];
+  if (ck && haveClips([ck])) {            // recorded/AI clip: plays through the sound engine (mic is paused during pacing)
+    V.coAsked = (V.coAsked || 0) + 1; V.coSpoken = (V.coSpoken || 0) + 1;
+    V.calloutUntil = Date.now() + 1500; playClips([ck]); return;
+  }
+  if (!('speechSynthesis' in window)) return;
+  try {
+    // the iPad's speech engine can get stuck; clear anything queued so a stale callout never blocks this one
+    if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+    V.coAsked = (V.coAsked || 0) + 1;
+    const u = new SpeechSynthesisUtterance(word); u.rate = 1.15; u.volume = 1;
+    u.onstart = () => { V.coSpoken = (V.coSpoken || 0) + 1; };
+    const bv = bestVoice(); if (bv) { u.voice = bv; u.lang = bv.lang; }
+    V.speaking = true; V.ttsWords = new Set(['up', 'down', 'done', 'dun', 'don', 'town', 'op'].concat(word.toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/)));
+    V.calloutUntil = Date.now() + 2500;               // "down" can sound like "done": ignore done just after a callout
+    u.onend = u.onerror = () => { V.calloutUntil = Date.now() + 900; clearTimeout(V.coT); V.coT = setTimeout(() => { V.speaking = false; micRestartAfterSpeech(); }, 1600); };
+    clearTimeout(V.coT); V.coT = setTimeout(() => { V.speaking = false; micRestartAfterSpeech(); }, 1600 + word.length * 90);   // in case onend never fires
+    speechSynthesis.speak(u);
+  } catch {}
+}
+
+// ---------- recorded / AI trainer voice (clip packs) ----------
+// voice/lines.json lists the lines; a pack is voice/<pack>/<key>.mp3. Clips play through the sound engine,
+// which can leave the mic deaf, so after clips the app does the same audio reset it does after pacing.
+const CLIPS = {}; let CLIP_LINES = null, CLIP_PACK_LOADED = '';
+const clipPack = () => LS.get('voicePack', PERSON === 'Michelle' ? 'josh' : 'device');   // Michelle starts on Josh's recorded voice
+const exKey = name => 'ex_' + String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+async function loadPack(force) {
+  const pack = clipPack();
+  if (pack === 'device' || !actx || (CLIP_PACK_LOADED === pack && !force)) return;
+  CLIP_PACK_LOADED = pack; Object.keys(CLIPS).forEach(k => delete CLIPS[k]);
+  try {
+    if (!CLIP_LINES) CLIP_LINES = (await (await fetch('../voice/lines.json', { cache: 'no-cache' })).json()).lines;
+    await Promise.all(CLIP_LINES.map(async l => {
+      try { const r = await fetch(`../voice/${pack}/${l.key}.mp3`, { cache: 'no-cache' }); if (!r.ok) return; CLIPS[l.key] = await actx.decodeAudioData(await r.arrayBuffer()); } catch {}
+    }));
+    vlog('', `voice pack ${pack}: ${Object.keys(CLIPS).length} of ${CLIP_LINES.length} clips`);
+  } catch (e) { vlog('', 'voice pack failed: ' + e.message); }
+}
+const haveClips = keys => clipPack() !== 'device' && keys.every(k => CLIPS[k]);
+// play clips back to back; resolves when done
+function playClips(keys, gap = 0.12) {
+  return new Promise(res => {
+    try {
+      audioOn();
+      let t = actx.currentTime + 0.05;
+      keys.forEach(k => { const src = actx.createBufferSource(); src.buffer = CLIPS[k]; src.connect(actx.destination); src.start(t); t += CLIPS[k].duration + gap; });
+      setTimeout(res, (t - actx.currentTime) * 1000 + 50);
+    } catch { res(); }
+  });
+}
+// after clips outside a set: suspend the sound engine, silent utterance, then listen again
+function resetThenListen() {
+  try { if (actx && actx.state === 'running') actx.suspend(); } catch {}
+  let done = false; const go = () => { if (done) return; done = true; V.speaking = false; micRestartAfterSpeech(); };
+  try { const u = new SpeechSynthesisUtterance('.'); u.volume = 0; u.rate = 2; u.onend = u.onerror = go; speechSynthesis.speak(u); } catch { go(); }
+  setTimeout(go, 1500);
+}
+// say: use the chosen clip pack when every clip is there, else the device voice
+function say(keys, text) {
+  keys = keys.filter(Boolean);
+  if (!haveClips(keys)) { speak(text); return; }
+  V.speaking = true; V.ttsWords = new Set((Array.isArray(text) ? text.join(' ') : text).toLowerCase().replace(/[.,!?]/g, ' ').split(/\s+/));
+  playClips(keys).then(resetThenListen);
+}
+const CALLOUT_KEY = { 'Down!': 'down', 'Up!': 'up', 'Push yourself and max this set!': 'push_max' };
+let actx = null;
+function unlockAudio() {
+  try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); loadPack(); } catch {}
+  // iPadOS only lets the page talk after speech has been started from a tap once: do it silently on the first tap
+  try { if (!V.ttsUnlocked && 'speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); V.ttsUnlocked = true; micUI(); } } catch {}
+}
+document.addEventListener('touchend', unlockAudio, { passive: true });
+document.addEventListener('click', unlockAudio, true);
+function audioOn() { try { if (actx && actx.state !== 'running') actx.resume(); } catch {} }
+function beep(f = 880, ms = 160) { try { audioOn(); const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.connect(g); g.connect(actx.destination); g.gain.value = .25; o.start(); o.stop(actx.currentTime + ms / 1000); micCheckSoon(); } catch {} }
+// Metronome tick: low tone when the down move starts, high tone for up. Quiet and short so it doesn't fight the mic.
+function tick(up, soft) { try { audioOn(); const o = actx.createOscillator(), g = actx.createGain(); o.type = 'triangle'; o.frequency.value = up ? 1320 : 660; o.connect(g); g.connect(actx.destination); const v = soft ? 0.08 : 0.18; g.gain.setValueAtTime(v, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.07); o.start(); o.stop(actx.currentTime + 0.08); } catch {} }
+let wake = null;
+async function keepAwake() { try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => wake = null); } } catch {} }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { keepAwake(); if (Date.now() - lastLoad > 5 * 60e3) loadState(true); } });
+
+
+// ---------- "Tell my trainer" / "Tell my developer" notes ----------
+// Saved to the Feedback tab (For = Trainer or Developer, Person, Context = screen · exercise · session); each person's trainer and Josh's developer Claude read them.
+let NOTE = null;
+function openNote(who, start) {
+  if (NOTE) return;
+  const box = document.getElementById('noteBox');
+  NOTE = { who, text: start || '', saved: V.handlers, savedMap: SAYMAP, savedCustom: V.customDecide, screen: SCREEN, ex: CUR ? CUR.name : '' };
+  const label = who === 'trainer' ? '💬 Note for your trainer' : '🛠 Note for the developer';
+  box.innerHTML = `<div class="card" style="max-width:900px;margin:0 auto"><h2>${label}</h2>
+    <p class="dim">Just talk. Say “save note” (or “save”) when you’re done, or tap Save. You can also type.</p>
+    <textarea id="noteText" style="width:100%;height:220px;font:inherit;font-size:24px;padding:14px;border-radius:14px;background:#0b0c10;color:var(--fg);border:1px solid #333;-webkit-user-select:text;user-select:text"></textarea>
+    <div class="row mt"><button class="go" id="noteSave">Save note</button><button class="sm" id="noteClear">Clear</button><button class="sm stop" id="noteCancel">Cancel</button></div></div>`;
+  box.style.display = 'block';
+  const ta = document.getElementById('noteText'); ta.value = NOTE.text;
+  SAYMAP = {}; V.handlers = { custom: true }; V.utt = []; V.screenAt = Date.now();
+  V.customDecide = toks => {
+    const ph = toks.join(' ');
+    if (/^((save|safe|saved|say|same|take|state) (note|it)|save|safe|done|that's it)$/.test(ph)) { saveNote(); return 'note saved'; }
+    const tail = ph.match(/^(.*\S)\s+(?:save|safe|saved|say|same|take|state) note$/);   // "… save note" at the end of a sentence
+    if (tail) { ta.value = (ta.value ? ta.value + ' ' : '') + tail[1]; saveNote(); return 'note saved'; }
+    if (/^(cancel|never mind|cancel note)$/.test(ph)) { closeNote(); return 'note cancelled'; }
+    ta.value = (ta.value ? ta.value + ' ' : '') + ph; return 'note text';
+  };
+  document.getElementById('noteSave').onclick = saveNote;
+  document.getElementById('noteClear').onclick = () => { ta.value = ''; };
+  document.getElementById('noteCancel').onclick = closeNote;
+}
+function saveNote() {
+  const text = (document.getElementById('noteText').value || '').trim();
+  if (!text) return toast('Nothing to save yet');
+  const d = new Date();
+  queue('Feedback', { Date: dstr(d), Time: `${pad(d.getHours())}:${pad(d.getMinutes())}`, Person: PERSON, For: NOTE.who === 'trainer' ? 'Trainer' : 'Developer',
+    Message: text, Status: 'New', EntryID: 'F' + uid(), Context: [NOTE.screen, NOTE.ex, SESSION ? SESSION.id : ''].filter(Boolean).join(' · ') });
+  toast(NOTE.who === 'trainer' ? 'Saved for your trainer' : 'Saved for the developer');
+  closeNote();
+}
+function closeNote() {
+  if (!NOTE) return;
+  document.getElementById('noteBox').style.display = 'none';
+  V.handlers = NOTE.saved; V.customDecide = NOTE.savedCustom; V.utt = []; annotate();   // rebuild the say-words for whatever screen is showing now
+  NOTE = null;
+}
+document.getElementById('noteT').onclick = () => openNote('trainer');
+document.getElementById('noteD').onclick = () => openNote('developer');
+
+// ---------- session ----------
+let SESSION = LS.get('session', null);
+function sessionAlive() { return SESSION && Date.now() - SESSION.lastAt < 45 * 60e3; }
+function newSession() {
+  const d = new Date();
+  SESSION = { id: `${dstr(d)}-${pad(d.getHours())}${pad(d.getMinutes())}`, start: Date.now(), lastAt: Date.now(), type: null, lastEx: null, countBy: {}, log: [], skipped: [], prs: [] };
+  saveSession();
+}
+function saveSession() { LS.set('session', SESSION); }
+function event(type, exName = '', joint = '', reason = '', detail = '') {
+  queue('Events', [tstr(new Date()), SESSION ? SESSION.id : '', type, exName, joint, reason, detail, uid()]);
+}
+
+// ---------- screens ----------
+let CUR = null;   // the set in progress
+function screen(html, handlers) { if (V.paused && !(html || '').includes('id="clock"')) micResume('after set'); if (NOTE) { $app.innerHTML = html; NOTE.saved = handlers || null; const t0 = $app.querySelector('h1,h2,h3'); NOTE.screen = t0 ? t0.textContent.slice(0, 40) : NOTE.screen; return; } V.customDecide = null; $app.innerHTML = html; V.handlers = handlers || null; V.utt = []; V.recent = []; clearTimeout(V.timer); V.screenAt = Date.now(); window.scrollTo(0, 0); const t = $app.querySelector('h1,h2,h3'); SCREEN = t ? t.textContent.slice(0, 40) : ''; SCREEN_IS_HOME = !!$app.querySelector('#lvTile'); micUI(); annotate(); }
+function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick = () => { unlockAudio(); fn(); }; }
+
+function showSetup() {
+  screen(`<h1>Connect to your sheet</h1>
+  <p class="dim">Open the setup link Claude gave you on this iPad, or paste the two values here.</p>
+  <div class="card"><h3>Web app URL</h3><input id="u" placeholder="https://script.google.com/macros/s/…/exec"><h3 class="mt">Key</h3><input id="k"></div>
+  <button class="go" id="save" style="width:100%">Connect</button>`);
+  on('save', async () => { CFG = { url: document.getElementById('u').value.trim(), key: document.getElementById('k').value.trim() }; LS.set('cfg', CFG); await loadState(); home(); });
+}
+
+// ---------- home: the launch pad ----------
+const CHEERS = {
+  start: ['Fresh week, fresh start. Let’s put the first sets on the board.', 'Every rep counts. Let’s go.', 'Small pieces add up. A few sets now?'],
+  behind: ['A few sets today gets you right back on pace.', 'No catching up all at once. Just the next set.', 'You’ve got this. Knock out a quick round.'],
+  pace: ['Right on pace. Keep the rhythm going.', 'Steady wins. One more round?', 'Nice and consistent. Let’s add to it.'],
+  ahead: ['Ahead of pace and looking strong.', 'You’re crushing the week. Bonus round?', 'Way out in front. Keep that energy.'],
+  done: ['Weekly goal smashed! Anything more is bonus.', 'Quota complete. Legend status.', 'Week won. Extra credit if you want it.']
+};
+const pick1 = a => a[Math.floor(Math.random() * a.length)];
+function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
+// Streak: workouts in a row where the gap between them never exceeds the allowed rest (default 3 days)
+function streakInfo(sets) {
+  const gap = setting('Streak Gap Allowed (days)', 3);
+  const days = [...new Set(sets.filter(s => s.reps != null).map(s => dstr(s.t)))].sort();
+  if (!days.length) return { n: 0, last: null };
+  const last = parseDate(days[days.length - 1]);
+  const sinceLast = Math.floor((new Date().setHours(12, 0, 0, 0) - last) / DAY);
+  if (sinceLast > gap) return { n: 0, last, broken: true };
+  let n = 1;
+  for (let i = days.length - 1; i > 0; i--) { if ((parseDate(days[i]) - parseDate(days[i - 1])) / DAY <= gap) n++; else break; }
+  return { n, last, sinceLast, daysLeft: gap - sinceLast };
+}
+function alive0() { return sessionAlive() && SESSION.log.length; }
+function home() {
+  if (UPDATE_READY && !(sessionAlive() && SESSION.log.length)) return applyUpdate();
+  if (!CFG) return showSetup();
+  if (SESSION && !sessionAlive() && SESSION.log && SESSION.log.length && !SESSION.ended) {
+    SESSION.ended = true; saveSession(); event('session_end', '', '', 'Timed out', `${SESSION.log.length} sets`);
+    return watchEnd(summary);
+  }
+  if (!S) { screen(`<h1>Loading…</h1>`); loadState().then(() => S ? home() : showSetup()); return; }
+  if (!alive0()) { const due = bodyCheckDue(); if (due.length) return bodyCheckIn(due); }
+  const n = whatsNext(), sets = allSets(), alive = sessionAlive();
+  const pct = Math.min(100, Math.round(100 * n.totD / Math.max(1, n.totQ)));
+  const st = streakInfo(sets);
+  const prs = ((S && S.progress) || []).filter(r => r['Type'] === 'PR');
+  const prWeek = prs.filter(r => parseDate(r['Date']) >= weekStart()).length;
+  const led = xpLedger(), lv = levelFor(xpTotal(led)), td = dstr(new Date());
+  const xpToday = led.filter(e => dstr(e.t) === td).reduce((a, e) => a + e.xp, 0);
+  const mood = n.totD >= n.totQ ? 'done' : n.totD === 0 ? 'start' : /Behind/.test(n.pace.text) ? 'behind' : /Ahead/.test(n.pace.text) ? 'ahead' : 'pace';
+  const R = 88, C = 2 * Math.PI * R;
+  const byDay = st.n ? new Date(st.last.getTime() + setting('Streak Gap Allowed (days)', 3) * DAY).toLocaleDateString('en-US', { weekday: 'short' }) : '';
+  const streakText = 'workout streak';
+  const streakSub = st.n ? (st.daysLeft === 0 ? '<span class="warn">Work out today to keep it alive</span>' : `Keep it alive: next workout by <strong style="color:var(--fg)">${byDay}</strong>`) : (st.broken ? 'Start a new streak today' : 'Start your streak today');
+  screen(`<style>
+      .hero{background:linear-gradient(135deg,#1d3b2a,#14324f);border-radius:28px;padding:12px 26px;display:flex;align-items:center;gap:30px;margin-bottom:12px}
+      .ring{transition:stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1)}
+      .getgo{width:100%;font-size:52px;min-height:112px;border-radius:30px;background:linear-gradient(135deg,#3ddc84,#1fb6ff);color:#04210f;box-shadow:0 10px 40px rgba(61,220,132,.35);animation:pulse 2.4s ease-in-out infinite}
+      @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.015)}}
+      .tiles{display:grid;grid-template-columns:1fr 1fr 200px;gap:14px;margin:12px 0 0}
+      .tile{background:var(--card);border-radius:22px;padding:14px 20px}
+      .tile b{display:block;font-size:40px;line-height:1.1}
+      .tile span{color:var(--dim);font-size:18px}
+    </style>
+    <div class="hero" id="heroWk" style="cursor:pointer">
+      <svg width="150" height="150" viewBox="0 0 210 210" style="flex:0 0 150px">
+        <circle cx="105" cy="105" r="${R}" stroke="rgba(255,255,255,.12)" stroke-width="18" fill="none"/>
+        <circle id="ring" class="ring" cx="105" cy="105" r="${R}" stroke="${pct >= 100 ? '#ffd166' : '#3ddc84'}" stroke-width="18" fill="none" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C}" transform="rotate(-90 105 105)"/>
+        <text x="105" y="102" text-anchor="middle" fill="#fff" font-size="46" font-weight="800">${pct}%</text>
+        <text x="105" y="134" text-anchor="middle" fill="#cfe" font-size="18">${n.totD} of ${n.totQ} sets</text>
+      </svg>
+      <div><div class="dim" style="font-size:22px">${greeting()}, ${esc(PERSON)}</div>
+        <h1 style="font-size:46px">${pct >= 100 ? 'Week complete! 🏆' : 'This week'}</h1>
+        <div style="font-size:26px">${pick1(CHEERS[mood])}</div>
+        <div class="dim mt" style="font-size:18px">Tap for this week’s tracker and exercise details ›</div></div>
+    </div>
+    <button class="getgo" id="go">${alive ? 'Keep Going! 💪' : 'Get Started! 💪'}</button>
+    <div class="tiles">
+      <div class="tile" id="stTile" style="cursor:pointer"><b>🔥 ${st.n} <span style="font-size:22px;font-weight:600">${streakText}</span></b><span>${streakSub}${st.last ? '<br>Last workout ' + (st.sinceLast === 0 ? 'today' : st.sinceLast === 1 ? 'yesterday' : st.sinceLast + ' days ago') : ''}</span></div>
+      <div class="tile" id="prTile" style="cursor:pointer"><b>🏆 ${prs.length}</b><span>personal records${prWeek ? `<br><span class="ok">${prWeek} this week!</span>` : ''}<br>Tap to see them ›</span></div>
+      <div class="tile" id="bodyTile" style="cursor:pointer;padding:8px 10px;text-align:center">${bodySvg(bodyStatus(allEvents()), 170, false)}<span>Tap to update</span></div>
+    </div>
+    <div class="tile" id="lvTile" style="cursor:pointer;margin-top:12px;display:flex;align-items:center;gap:22px;padding:10px 22px">
+      <div style="flex:0 0 auto;text-align:center"><div style="font-size:18px;color:var(--dim)">LEVEL</div><div style="font-size:56px;font-weight:800;line-height:1;color:#ffd166">${lv.L}</div></div>
+      <div style="flex:1"><div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:30px;display:inline">⭐ ${lv.title}</b><span style="font-size:18px;color:var(--dim)">${xpToday ? `<span class="ok">+${xpToday} XP today</span> · ` : ''}${lv.need - lv.into} XP to level ${lv.L + 1} ›</span></div><div style="margin-top:8px">${levelBar(lv, 20)}</div></div></div>
+    <div class="heard center"></div>`,
+    { ready: go, next: go, yes: go });
+  requestAnimationFrame(() => setTimeout(() => { const r = document.getElementById('ring'); if (r) r.style.strokeDashoffset = C * (1 - pct / 100); }, 80));
+  function go() { keepAwake(); if (!V.want) voiceStart(); upNext(); }
+  on('go', go);
+  document.getElementById('heroWk').onclick = weekView;
+  document.getElementById('prTile').onclick = recordsView;
+  document.getElementById('stTile').onclick = streaksView;
+  document.getElementById('bodyTile').onclick = () => bodyView();
+  document.getElementById('lvTile').onclick = levelsView;
+}
+
+// ---------- levels (XP) ----------
+// XP is worked out from the Sets and Progress tabs every time, so nothing extra is stored and the trainer can reproduce it.
+// Counts app-era training only (from the Levels Start setting, default 2026-11-18).
+const XP = { set: 10, push: 5, pr: 25, quota: 20, week: 100, streak: 50, streakEvery: 5 };
+const LEVEL_TITLES = [[1, 'Rookie'], [3, 'Regular'], [5, 'Grinder'], [8, 'Iron'], [12, 'Steel'], [16, 'Titan'], [20, 'Legend'], [25, 'Mythic']];
+const levelCost = L => Math.round(250 * Math.pow(L, 1.1) / 50) * 50;        // XP to go from level L to L+1: quick early, slower later
+function levelTitle(L) { let t = 'Rookie'; LEVEL_TITLES.forEach(([n, name]) => { if (L >= n) t = name; }); return t; }
+function levelFor(xp) {
+  let L = 1, base = 0;
+  while (xp >= base + levelCost(L)) { base += levelCost(L); L++; }
+  return { L, title: levelTitle(L), into: xp - base, need: levelCost(L), xp };
+}
+function xpLedger() {
+  const start = parseDate(setting('Levels Start', '2026-11-18')) || new Date(2026, 10, 18);
+  start.setHours(0, 0, 0, 0);
+  const exs = exercises(), quota = Object.fromEntries(exs.map(e => [e.name, e.quota]));
+  // one entry per set (both sides of a one-side set count once)
+  const seen = new Map();
+  allSets().filter(x => x.reps != null && x.t >= start && !x.est).forEach(x => {
+    const k = `${x.session}|${x.ex}|${x.set}`;
+    if (!seen.has(k)) seen.set(k, x);
+  });
+  const sets = [...seen.values()].sort((a, b) => a.t - b.t);
+  const out = [], perWeek = {}, weekDone = new Set();
+  sets.forEach(x => {
+    const wk = dstr(weekStart(x.t)), c = (perWeek[wk] = perWeek[wk] || {});
+    c[x.ex] = (c[x.ex] || 0) + 1;
+    out.push({ t: x.t, xp: XP.set, why: 'Set', ex: x.ex });
+    const q = quota[x.ex];
+    if ((x.set || 0) >= 3 || (q && c[x.ex] === q)) out.push({ t: x.t, xp: XP.push, why: 'Push set', ex: x.ex });
+    if (q && c[x.ex] === q) out.push({ t: x.t, xp: XP.quota, why: `${x.ex} weekly quota`, ex: x.ex });
+    if (!weekDone.has(wk) && exs.length && exs.every(e => (c[e.name] || 0) >= e.quota)) { weekDone.add(wk); out.push({ t: x.t, xp: XP.week, why: 'Whole week complete' }); }
+  });
+  const prRows = ((S && S.progress) || []).concat(outbox.filter(o => o.sheet === 'Progress').map(o => rowToObj('Progress', o.row)));
+  const prSeen = new Set();
+  prRows.filter(r => r['Type'] === 'PR').forEach(r => {
+    if (prSeen.has(r['Row ID'])) return; prSeen.add(r['Row ID']);
+    const t = parseDate(r['Date']); if (t && t >= start) out.push({ t, xp: XP.pr, why: 'PR: ' + r['Name'] });
+  });
+  // streak milestones: every 5 workout days in a row
+  streakChains(sets).forEach(ch => {
+    const days = [...new Set(sets.map(x => dstr(x.t)))].sort().filter(d => { const t = parseDate(d); return t >= ch.start && t <= ch.end; });
+    for (let n = XP.streakEvery; n <= ch.n; n += XP.streakEvery) { const d = parseDate(days[n - 1]); if (d) out.push({ t: d, xp: XP.streak, why: `${n}-workout streak` }); }
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+function xpTotal(led) { return (led || xpLedger()).reduce((a, e) => a + e.xp, 0); }
+function levelBar(lv, h = 18) { const pct = Math.round(100 * lv.into / lv.need); return `<div style="background:rgba(255,255,255,.12);border-radius:${h}px;height:${h}px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#ffd166,#f78c6b);border-radius:${h}px"></div></div>`; }
+// After each set: note XP earned and celebrate a level up
+function xpAfterSet(before) {
+  const after = levelFor(xpTotal());
+  const gained = after.xp - before.xp;
+  if (gained > 0) CUR.xpGain = gained;
+  if (after.L > before.L) { CUR.levelUp = after; toast(`⭐ Level up! Level ${after.L} · ${after.title}`); beep(1175, 160); setTimeout(() => beep(1568, 260), 180); }
+}
+function levelsView() {
+  const led = xpLedger(), lv = levelFor(xpTotal(led));
+  const ws = weekStart(), today = dstr(new Date());
+  const wk = led.filter(e => e.t >= ws), wkXp = wk.reduce((a, e) => a + e.xp, 0);
+  const group = {}; wk.forEach(e => { const k = /^PR/.test(e.why) ? 'Personal records' : /quota/.test(e.why) ? 'Weekly quotas hit' : e.why === 'Set' ? 'Sets' : /streak/.test(e.why) ? 'Streak bonus' : e.why; group[k] = (group[k] || 0) + e.xp; });
+  const ladder = []; let base = 0; for (let L = 1; L <= Math.max(lv.L + 4, 8); L++) { ladder.push({ L, at: base, title: levelTitle(L) }); base += levelCost(L); }
+  const recent = led.filter(e => e.why !== 'Set').slice(-8).reverse();
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>⭐ Levels</h2></div><div class="cols"><div>
+    <div class="card center"><div style="font-size:30px;color:var(--dim)">Level</div><div class="huge" style="font-size:150px;line-height:1">${lv.L}</div><div style="font-size:40px;font-weight:800;color:#ffd166">${lv.title}</div>
+      <div class="mt">${levelBar(lv, 24)}</div><div class="dim mt" style="font-size:22px">${lv.into} / ${lv.need} XP · ${lv.need - lv.into} to level ${lv.L + 1}</div></div>
+    <div class="card"><h3>How you earn XP</h3><div style="font-size:22px;line-height:1.6">
+      Every set: <b>${XP.set}</b> · Push set: <b>+${XP.push}</b><br>Personal record: <b>+${XP.pr}</b><br>Hit an exercise’s weekly quota: <b>+${XP.quota}</b><br>Whole week complete: <b>+${XP.week}</b><br>Every ${XP.streakEvery} workouts in a streak: <b>+${XP.streak}</b></div>
+      <p class="dim" style="font-size:18px">Levels come quickly at first, then take longer. Counts training in the app from ${esc(setting('Levels Start', '2026-11-18'))}.</p></div></div><div>
+    <div class="card"><h3>This week: ${wkXp} XP</h3>${Object.entries(group).map(([k, v]) => `<div class="exrow"><span class="n">${esc(k)}</span><span>+${v}</span></div>`).join('') || '<p class="dim">Nothing yet this week.</p>'}</div>
+    <div class="card"><h3>Recent bonuses</h3>${recent.map(e => `<div class="exrow"><span class="n">${esc(e.why)}</span><span>+${e.xp}</span><span class="dim" style="flex:0 0 110px;text-align:right">${dstr(e.t) === today ? 'today' : e.t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span></div>`).join('') || '<p class="dim">Push sets, records and quotas show up here.</p>'}</div>
+    <div class="card"><h3>The ladder</h3>${ladder.map(r => `<div class="exrow" style="${r.L === lv.L ? 'color:#ffd166;font-weight:800' : r.L < lv.L ? 'opacity:.55' : ''}"><span class="n">Level ${r.L}</span><span style="flex:1">${r.title}</span><span class="dim">${r.at.toLocaleString()} XP</span></div>`).join('')}</div></div></div>`);
+  on('back', home); on('back2', home);
+}
+
+// ---------- streaks ----------
+function streakChains(sets) {
+  const gap = setting('Streak Gap Allowed (days)', 3);
+  const days = [...new Set(sets.filter(s => s.reps != null && !s.est).map(s => dstr(s.t)))].sort().map(parseDate);
+  const chains = []; let cur = null;
+  days.forEach(d => { if (cur && (d - cur.end) / DAY <= gap) { cur.end = d; cur.n++; } else { cur = { start: d, end: d, n: 1 }; chains.push(cur); } });
+  return chains;
+}
+function streaksView() {
+  const gap = setting('Streak Gap Allowed (days)', 3);
+  const chains = streakChains(allSets()), st = streakInfo(allSets());
+  const best = chains.reduce((m, c) => c.n > m.n ? c : m, { n: 0 });
+  const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const past = chains.slice().sort((a, b) => b.n - a.n || b.end - a.end).slice(0, 10);
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>🔥 Workout streaks</h2></div><div class="cols"><div>
+    <div class="card"><h3>How it works</h3><p style="font-size:24px;margin:0">Every workout day adds one to your streak, as long as you never go more than <b>${gap} days</b> between workouts. Rest days are fine; they just can't stretch past ${gap} days. Miss that window and the streak starts over at your next workout.</p></div>
+    <div class="row"><div class="card center"><div class="big">${st.n}</div><div class="dim">current streak</div></div><div class="card center"><div class="big">${best.n}</div><div class="dim">best ever${best.n ? '<br>' + fmt(best.start) + ' – ' + fmt(best.end) : ''}</div></div><div class="card center"><div class="big">${chains.length}</div><div class="dim">streaks started</div></div></div></div><div>
+    <div class="card"><h3>Longest streaks</h3>${past.map(c => `<div class="exrow"><span class="n">🔥 ${c.n} workout${c.n === 1 ? '' : 's'}</span><span style="flex:1">${fmt(c.start)}${c.n > 1 ? ' – ' + fmt(c.end) : ''}</span>${c === chains[chains.length - 1] && st.n ? '<span class="ok">current</span>' : ''}</div>`).join('') || '<p class="dim">No workouts yet.</p>'}
+      <p class="dim" style="font-size:17px">Based on dated workouts; the 13 notebook sessions with estimated dates aren't counted.</p></div>
+    </div></div>`);
+  on('back', home); on('back2', home);
+}
+
+// ---------- body map ----------
+// Front view (you facing the screen, so your right side is on the left) plus a small back view for the back areas
+const BODY_POS = { neck: [100, 70], shR: [62, 92], shL: [138, 92], elR: [42, 162], elL: [158, 162], wrR: [32, 232], wrL: [168, 232], hpR: [82, 210], hpL: [118, 210], knR: [80, 292], knL: [120, 292] };
+function bodySvg(bs, size, tappable, selected) {
+  const col = id => STATUS_COLOR[bs[REGIONS.find(r => r.id === id).label].status];
+  const g = '#3a4150';
+  const joint = id => `<circle data-r="${id}" cx="${BODY_POS[id][0]}" cy="${BODY_POS[id][1]}" r="${tappable ? 15 : 13}" fill="${col(id)}" stroke="${id === selected ? '#fff' : '#0f1115'}" stroke-width="${id === selected ? 5 : 3}" ${tappable ? 'style="cursor:pointer"' : ''}/>`;
+  return `<svg viewBox="0 0 400 400" width="${size}" style="max-width:100%;display:block;margin:0 auto">
+    <g fill="${g}" stroke="${g}" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="100" cy="38" r="22"/><rect x="92" y="56" width="16" height="16"/>
+      <rect x="66" y="80" width="68" height="128" rx="22"/>
+      <path d="M62 92 L42 162 L32 232" stroke-width="16" fill="none"/><path d="M138 92 L158 162 L168 232" stroke-width="16" fill="none"/>
+      <path d="M82 210 L80 292 L78 378" stroke-width="20" fill="none"/><path d="M118 210 L120 292 L122 378" stroke-width="20" fill="none"/>
+      <circle cx="300" cy="38" r="22"/><rect x="292" y="56" width="16" height="16"/>
+      <rect x="262" y="80" width="76" height="132" rx="22"/>
+      <path d="M262 92 L244 162 L236 232" stroke-width="16" fill="none"/><path d="M338 92 L356 162 L364 232" stroke-width="16" fill="none"/>
+      <path d="M284 212 L282 292 L280 378" stroke-width="20" fill="none"/><path d="M316 212 L318 292 L320 378" stroke-width="20" fill="none"/>
+    </g>
+    <rect data-r="ub" x="272" y="92" width="56" height="52" rx="12" fill="${col('ub')}" stroke="${selected === 'ub' ? '#fff' : '#0f1115'}" stroke-width="${selected === 'ub' ? 5 : 3}" ${tappable ? 'style="cursor:pointer"' : ''}/>
+    <rect data-r="lb" x="272" y="150" width="56" height="52" rx="12" fill="${col('lb')}" stroke="${selected === 'lb' ? '#fff' : '#0f1115'}" stroke-width="${selected === 'lb' ? 5 : 3}" ${tappable ? 'style="cursor:pointer"' : ''}/>
+    ${Object.keys(BODY_POS).map(joint).join('')}
+    <text x="100" y="398" text-anchor="middle" fill="#9aa1ad" font-size="16">Front</text><text x="300" y="398" text-anchor="middle" fill="#9aa1ad" font-size="16">Back</text>
+    <text x="22" y="100" fill="#9aa1ad" font-size="15">R</text><text x="170" y="100" fill="#9aa1ad" font-size="15">L</text>
+  </svg>`;
+}
+function bodyView(selected) {
+  const bs = bodyStatus(allEvents());
+  const sel = selected && REGIONS.find(r => r.id === selected);
+  const notGood = REGIONS.filter(r => bs[r.label].status !== 'good');
+  const since = t => t ? t.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>How’s your body?</h2></div>
+    <p class="dim">Tap an area to set it. 🟢 Good · 🟡 Sore: lighter first set · 🔴 Hurt: ask before exercises that use it</p>
+    <div class="row" style="align-items:flex-start">
+      <div style="flex:3">${bodySvg(bs, 520, true, selected)}</div>
+      <div style="flex:2">
+        ${sel ? `<div class="card"><h3>${esc(sel.label)}</h3><div class="dim" style="margin-bottom:12px">Now: ${bs[sel.label].status}${bs[sel.label].t ? ' since ' + since(bs[sel.label].t) : ''}</div>
+          <div class="chips" style="flex-direction:column">
+            <button data-st="good" style="background:#16391f;color:#6ee7a0">🟢 Good</button>
+            <button data-st="sore" style="background:#3d2f10;color:#f5c66b">🟡 Sore</button>
+            <button data-st="hurt" style="background:#3d1514;color:#ff8a87">🔴 Hurt</button></div></div>`
+          : `<div class="card"><h3>Not 100%</h3>${notGood.length ? notGood.map(r => `<div class="exrow" data-pick="${r.id}" style="cursor:pointer"><span style="flex:1">${bs[r.label].status === 'hurt' ? '🔴' : '🟡'} ${esc(r.label)}</span><span class="dim">since ${since(bs[r.label].t)}</span></div>`).join('') : '<p class="dim">Everything’s green. 💪</p>'}</div>`}
+      </div></div>
+    `);
+  document.querySelectorAll('[data-r]').forEach(el => el.addEventListener('click', () => bodyView(el.getAttribute('data-r'))));
+  document.querySelectorAll('[data-pick]').forEach(el => el.onclick = () => bodyView(el.dataset.pick));
+  document.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { setBody(sel.label, b.dataset.st, 'body map'); toast(`${sel.label}: ${b.dataset.st}`); bodyView(); });
+  on('back2', home);
+}
+// Every 48 hours, ask about areas that aren't green (they never clear on their own)
+function bodyCheckDue() {
+  const bs = bodyStatus(allEvents()), snooze = local.bodySnooze || 0;
+  if (Date.now() < snooze) return [];
+  return REGIONS.filter(r => bs[r.label].status !== 'good' && bs[r.label].t && Date.now() - bs[r.label].t > 48 * HOUR);
+}
+function bodyCheckIn(due) {
+  const bs = bodyStatus(allEvents());
+  const r = due[0];
+  speak(`How is your ${r.label.toLowerCase()} today?`);
+  screen(`<div class="center" style="padding-top:20px"><h3>Body check-in${due.length > 1 ? ` · 1 of ${due.length}` : ''}</h3>
+    <h1>How’s your ${esc(r.label.toLowerCase())}?</h1><p class="dim" style="font-size:24px">It’s been ${bs[r.label].status} since ${bs[r.label].t.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}.</p>
+    <div class="row mt"><button data-st="good" style="background:#16391f;color:#6ee7a0">🟢 Good</button><button data-st="sore" style="background:#3d2f10;color:#f5c66b">🟡 Sore</button><button data-st="hurt" style="background:#3d1514;color:#ff8a87">🔴 Hurt</button></div>
+    <button class="sm mt" id="later">Ask me later</button><div class="heard"></div></div>`);
+  document.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { setBody(r.label, b.dataset.st, '48h check-in'); const rest = due.slice(1); rest.length ? bodyCheckIn(rest) : home(); });
+  on('later', () => { local.bodySnooze = Date.now() + 12 * HOUR; LS.set('local', local); home(); });
+}
+
+// ---------- records ----------
+function recordsView() {
+  const prs = ((S && S.progress) || []).filter(r => r['Type'] === 'PR').slice().reverse();
+  const sets = allSets().filter(s => s.reps != null && s.weight != null);
+  const bests = exercises().filter(e => e.type !== 'Core').map(e => {
+    const mine = sets.filter(s => s.ex === e.name); if (!mine.length) return null;
+    const top = mine.reduce((m, s) => Math.max(m, s.weight), 0);
+    const atTop = mine.filter(s => s.weight === top).sort((a, b) => b.reps - a.reps)[0];
+    return { name: e.name, top, reps: atTop.reps, when: atTop.t };
+  }).filter(Boolean);
+  const fmtD = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>🏆 Personal records</h2></div>
+    <div class="cols"><div class="card"><h3>Records set in the app</h3>${prs.length ? prs.map(r => `<div class="exrow"><span class="n">${esc(r['Name'])}</span><span style="flex:1">${esc(r['Detail'])}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(parseDate(r['Date']))}</span></div>`).join('') : '<p class="dim">None yet. Beat your heaviest weight, or your most reps at a weight, to earn one.</p>'}</div>
+    <div class="card"><h3>All-time heaviest, from your full history</h3>${bests.map(b => `<div class="exrow"><span class="n">${esc(b.name)}</span><span style="flex:1">${+b.top.toFixed(1)} lb × ${b.reps}</span><span class="dim" style="flex:0 0 150px;text-align:right">${fmtD(b.when)}</span></div>`).join('')}</div></div>`);
+  on('back', home); on('back2', home);
+}
+
+// ---------- settings (gear) ----------
+function settingsView() {
+  if (alive0()) return toast('Settings are available between sessions');
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>⚙️ Settings</h2></div>
+    <div class="grid2">
+      <button id="ex" style="text-align:left">🏋️ Exercises<br><span class="dim" style="font-size:18px">See, start, turn on or off, request new</span></button>
+      <button id="body" style="text-align:left">🧍 Body map<br><span class="dim" style="font-size:18px">Mark areas good, sore or hurt</span></button>
+      <button id="talk" style="text-align:left">🔊 Voice prompts: ${LS.get('talk', true) ? 'on' : 'off'}<br><span class="dim" style="font-size:18px">Whether the app talks to you</span></button>
+      <button id="pickv" style="text-align:left">🗣️ Choose voice<br><span class="dim" style="font-size:18px">The voice used for prompts</span></button>
+      <button id="refresh" style="text-align:left">🔄 Reload plan<br><span class="dim" style="font-size:18px">Fetch the latest from your sheet</span></button>
+      ${PERSON === 'Josh' && CFG ? `<button id="share" style="text-align:left">👩 Michelle's setup link<br><span class="dim" style="font-size:18px">Send it to her iPad to connect her app</span></button>` : ''}
+    </div>
+    <button class="mt" id="back" style="width:100%">Back</button>`);
+  on('ex', () => pickExercise(settingsView));
+  on('body', () => bodyView());
+  on('talk', () => { LS.set('talk', !LS.get('talk', true)); settingsView(); });
+  on('pickv', voicePicker);
+  on('refresh', async () => { await loadState(); toast('Plan reloaded'); settingsView(); });
+  on('share', async () => {
+    const link = new URL('../michelle/', location.href).href + '#setup=' + btoa(JSON.stringify({ url: CFG.url, key: CFG.key })).replace(/\+/g, '-').replace(/\//g, '_');
+    try { if (navigator.share) { await navigator.share({ title: 'Workout Buddy for Michelle', url: link }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(link); toast('Link copied: send it to Michelle'); } catch { prompt('Copy this link for Michelle', link); }
+  });
+  on('back', home); on('back2', home);
+}
+document.getElementById('gear').onclick = () => { unlockAudio(); if (NOTE) closeNote(); settingsView(); };
+
+// ---------- up next: just the next exercise ----------
+function upNext() {
+  const n = whatsNext(), alive = sessionAlive(), p = n.pick;
+  if (!p) {
+    screen(`<div class="card"><h1>Nothing available right now</h1><p class="dim">Every muscle has had ${setting('Max Sets per Muscle per 24h', 3)} sets in the last 24 hours, or is waiting on a flagged joint. Come back later.</p></div><button id="back" style="width:100%">Back</button>`);
+    return on('back', home);
+  }
+  const w = weightFor(p.ex, n.sets);
+  screen(`<div class="card"><h3>${n.extra ? 'Quota done. Extra set?' : 'Up next'}</h3><h1>${esc(p.ex.name)}</h1>
+      <div class="big">${fmtW(w.w)}</div>
+      <div class="setup mt">${esc(p.ex.setup)}</div>
+      <div class="dim mt">${p.done}/${p.ex.quota} this week · ${esc(p.ex.muscle)}${p.js ? ` · <span class="warn">${p.js.joints.concat(p.js.sore).join(', ')} ${p.js.joints.length ? 'hurt' : 'sore'}</span>` : ''}</div></div>
+    <button class="go" id="go" style="width:100%;font-size:40px;min-height:140px">${alive ? 'Continue' : 'Start'}</button>
+    <div class="row mt"><button class="sm" id="pickx" data-say="pick">Pick something else</button><button class="sm" id="back">Back</button></div>
+    <div class="heard center"></div>`,
+    { ready: go, next: go, yes: go });
+  function go() { keepAwake(); if (!V.want) voiceStart(); if (!alive) watchGate(() => prep(p.ex.name)); else prep(p.ex.name); }
+  on('go', go); on('pickx', pickExercise); on('back', home);
+}
+
+function voicePicker() {
+  const vs = voices().sort((a, b) => voiceScore(b) - voiceScore(a));
+  const cur = bestVoice();
+  const good = vs.filter(v => voiceScore(v) >= 50);
+  const pk = clipPack(), packBtn = (id, label, sub) => `<button class="sm" data-pack="${id}" style="text-align:left${pk === id ? ';outline:4px solid var(--acc)' : ''}">${label}<br><span class="dim" style="font-size:18px">${sub}</span></button>`;
+  screen(`<h2>Choose the app's voice</h2>
+    <div class="card"><h3>Trainer voice</h3><div class="grid2">${packBtn('device', 'iPad voice', 'built-in speech, chosen below')}${packBtn('ai', 'AI coach · Michael', 'natural AI voice')}${packBtn('bella', 'AI coach · Bella', 'natural AI voice')}${packBtn('josh', 'Josh', 'his own recordings')}</div>
+    <p class="dim" style="font-size:18px">Clips loaded: ${Object.keys(CLIPS).length}${pk === 'device' ? '' : ' (any line without a clip uses the iPad voice)'}</p></div>
+    <div class="card dim" style="font-size:20px">iPadOS doesn't let web apps use the Premium or Enhanced voices you download, only the built-in ones below. “iPad default” lets iPadOS choose, which is worth a try.</div>
+    <div class="grid2"><button class="sm" data-v="system" style="text-align:left${LS.get('voice', '') === 'system' ? ';outline:4px solid var(--acc)' : ''}">iPad default<br><span class="dim" style="font-size:18px">let iPadOS choose</span></button>${vs.slice(0, 16).map(v => `<button class="sm" data-v="${esc(v.voiceURI)}" data-say="${esc(v.name.toLowerCase().split(' ')[0])}" style="text-align:left${LS.get('voice', '') !== 'system' && cur && cur.voiceURI === v.voiceURI ? ';outline:4px solid var(--acc)' : ''}">${esc(v.name)}<br><span class="dim" style="font-size:18px">${esc(v.lang)}${voiceScore(v) >= 100 ? ' · Premium' : voiceScore(v) >= 50 ? ' · Enhanced' : ''}</span></button>`).join('')}</div>
+    <button class="go mt" id="done" style="width:100%" data-say="done">Done</button>`);
+  document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { LS.set('voice', b.dataset.v); const was = LS.get('talk', true); LS.set('talk', true); speak('Next up: squats, thirty pounds.'); LS.set('talk', was); voicePicker(); });
+  document.querySelectorAll('[data-pack]').forEach(b => b.onclick = async () => { LS.set('voicePack', b.dataset.pack); unlockAudio(); await loadPack(true); voicePicker(); if (b.dataset.pack !== 'device') say(['rest_up', 'set_2', 'ex_squats'], 'Rest is up. Set two of three. Squats.'); });
+  on('done', settingsView);
+}
+function watchGate(next) {
+  if (setting('Watch Reminder', 'Yes') !== 'Yes') { newSession(); return next(); }
+  // no spoken reminder: the screen is enough
+  screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>Start your Apple Watch workout</h1><p class="dim" style="font-size:26px">Traditional Strength Training. Say “running” or tap when it’s going.</p>
+    <button class="go mt" id="ok" style="width:70%" data-say="running">Watch is running</button>
+    <div class="row mt" style="width:70%;margin-left:15%"><button class="sm" id="nowatch" data-say="no watch">No watch today</button><button class="sm" id="cancel">Back</button></div><div class="heard"></div></div>`,
+    { yes: ok });
+  function ok() { newSession(); event('session_start', '', '', '', 'watch confirmed'); next(); }
+  function noWatch() { newSession(); SESSION.noWatch = true; saveSession(); event('session_start', '', '', '', 'no watch'); next(); }
+  on('ok', ok); on('nowatch', noWatch); on('cancel', home);
+}
+
+let EX_BACK = null;
+function pickExercise(back) {
+  if (typeof back === 'function') EX_BACK = back; else if (back !== 'keep') EX_BACK = null;
+  const n = whatsNext();
+  const groups = [['Weights', '🏋️ Weights'], ['Core', '🧘 Core']].map(([t, label]) => {
+    const items = n.info.filter(i => i.ex.type === t); if (!items.length) return '';
+    const off = typeSkipped(t);
+    return `<div class="card" style="padding:12px 16px;margin-bottom:12px${off ? ';opacity:.6' : ''}"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><h3 style="margin:0">${label}</h3>
+      <button class="sm" data-skip="${t}" data-say="skip ${t.toLowerCase()}" style="min-width:250px;${off ? 'background:#4a1515;color:#f87171' : ''}">${off ? '⏭ Skipping today' : 'Skip today: off'}</button></div>
+      <div class="grid3" style="grid-template-columns:repeat(4,1fr);gap:10px">${items.map(i => `<button class="sm" data-x="${esc(i.ex.name)}" data-say="${NAME_SAY[i.ex.name] || ''}" ${i.room <= 0 ? 'style="opacity:.45"' : ''}>${esc(i.ex.name)}<br><span class="dim" style="font-size:18px">${i.done}/${i.ex.quota} · ${i.room <= 0 ? 'muscle capped' : esc(i.ex.muscle)}</span></button>`).join('')}</div></div>`;
+  }).join('');
+  screen(`<h2>Exercises <span class="dim" style="font-size:22px">(active · tap one to start it)</span></h2>${groups}
+    <div class="row mt"><button class="sm" id="edit" data-say="edit">Edit list</button><button class="sm" id="req" data-say="request">Request exercise</button><button class="sm" id="back">Back</button></div>`);
+  document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { const x = b.dataset.x; if (!sessionAlive()) watchGate(() => prep(x)); else prep(x); });
+  document.querySelectorAll('[data-skip]').forEach(b => b.onclick = () => { const t = b.dataset.skip; setTypeSkip(t, !typeSkipped(t)); event('group_skip', '', '', t, typeSkipped(t) ? 'skipping today' : 'back on'); pickExercise('keep'); });
+  on('edit', editExercises);
+  on('req', () => openNote('developer', 'Exercise request: '));
+  on('back', () => (EX_BACK || home)());
+}
+
+// Turn exercises on or off for "what's next" and the weekly quota. Saved to the Exercises tab (Active column).
+function editExercises() {
+  const all = ((S && S.exercises) || []).slice().sort((a, b) => (num(a['Order']) ?? 99) - (num(b['Order']) ?? 99));
+  screen(`<h2>Edit exercise list <span class="dim" style="font-size:20px">Tap to turn on or off. Off exercises aren't suggested and don't count toward the quota.</span></h2>
+    ${[['Active', all.filter(e => e['Active'] === 'Yes')], ['Disabled', all.filter(e => e['Active'] !== 'Yes')]].map(([label, list]) => `<h3 class="mt">${label} (${list.length})</h3>
+    <div class="grid3" style="grid-template-columns:repeat(4,1fr)">${list.map(e => { const onx = e['Active'] === 'Yes'; return `<button class="sm" data-t="${esc(e['Exercise'])}" data-say="-" style="text-align:left;${onx ? '' : 'opacity:.55'}">${onx ? '✅' : '⬜️'} ${esc(e['Exercise'])}<br><span class="dim" style="font-size:18px">${esc(e['Day Type'])} · ${esc(e['Primary Muscle'])}${onx ? '' : ' · off'}</span></button>`; }).join('') || '<p class="dim">None</p>'}</div>`).join('')}
+    <div class="row mt"><button class="sm" id="req" data-say="request">Request exercise</button><button class="go" id="done" data-say="done">Done</button></div>`);
+  document.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
+    const name = b.dataset.t, row = S.exercises.find(e => e['Exercise'] === name);
+    const val = row['Active'] === 'Yes' ? 'No' : 'Yes';
+    row['Active'] = val; LS.set('state', S); editExercises();      // update right away, save in the background
+    try { await api({ action: 'updateExercise', exercise: name, field: 'Active', value: val }); toast(`${name}: ${val === 'Yes' ? 'on' : 'off'}`); }
+    catch (e) { toast('Could not save that change, try again'); row['Active'] = val === 'Yes' ? 'No' : 'Yes'; LS.set('state', S); editExercises(); }
+  });
+  on('req', () => openNote('developer', 'Exercise request: '));
+  on('done', () => pickExercise('keep'));
+}
+
+function weekView() {
+  const n = whatsNext();
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>This week · <span class="${n.pace.cls}">${n.pace.text}</span></h2></div><p class="dim" style="margin:0 0 10px">Tap an exercise for its details and history.</p><div class="card cols" style="column-gap:40px;row-gap:0">${n.info.map(i => `<div class="exrow" data-x="${esc(i.ex.name)}" style="cursor:pointer"><span class="n">${esc(i.ex.name)} ›</span><div class="bar"><i style="width:${Math.min(100, 100 * i.done / i.ex.quota)}%;background:${i.done >= i.ex.quota ? 'var(--ok)' : i.deficit > 1.5 ? 'var(--warn)' : 'var(--acc)'}"></i></div><span class="c">${i.done}/${i.ex.quota}</span></div>`).join('')}</div>`);
+  document.querySelectorAll('.exrow[data-x]').forEach(r => r.onclick = () => exerciseDetail(r.dataset.x));
+  on('back', home); on('back2', home);
+}
+
+// One exercise: this week's sets, then week-by-week history
+function exerciseDetail(name) {
+  const ex = exByName(name); if (!ex) return weekView();
+  const sets = allSets().filter(s => s.ex === name && s.reps != null).sort((a, b) => a.t - b.t);
+  const ws = weekStart(), w = weightFor(ex, allSets());
+  const fmtD = d => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const wt = s => s.weight == null ? '' : `${+s.weight.toFixed(1)} lb × `;
+  const thisWeek = sets.filter(s => s.t >= ws);
+  const done = thisWeek.filter(counts).length;
+  // group this week's sets by day, sides together
+  const byDay = {};
+  thisWeek.forEach(s => { const k = dstr(s.t); (byDay[k] = byDay[k] || []).push(s); });
+  const weekHtml = thisWeek.length ? Object.keys(byDay).map(k => `<div style="margin-bottom:10px"><b>${fmtD(parseDate(k))}</b>${byDay[k].map(s => `<div class="exrow"><span style="flex:0 0 70px">${s.side !== 'Both' ? s.side : 'Set ' + (s.set || '')}</span><span style="flex:1;white-space:nowrap">${wt(s)}${s.reps}</span><span class="dim" style="flex:0 0 auto;white-space:nowrap;font-size:18px">${s.dur ? s.dur + 's · ' : ''}${s.rir ? s.rir + ' left' : ''}${s.off ? ' · felt off' : ''}</span></div>`).join('')}</div>`).join('') : '<p class="dim">No sets yet this week.</p>';
+  // previous weeks: count, top weight, best set, total reps
+  const weeks = {};
+  sets.filter(s => s.t < ws).forEach(s => { const k = dstr(weekStart(s.t)); (weeks[k] = weeks[k] || []).push(s); });
+  const keys = Object.keys(weeks).sort().reverse();
+  const histHtml = keys.length ? `<div class="exrow dim" style="font-size:16px"><span style="flex:0 0 120px">Week of</span><span style="flex:0 0 50px">Sets</span><span style="flex:0 0 80px">Top</span><span style="flex:1">Best set</span><span style="flex:0 0 70px;text-align:right">Reps</span></div>` + keys.slice(0, 26).map(k => {
+    const g = weeks[k], cnt = g.filter(counts).length;
+    const top = g.filter(s => s.weight != null).reduce((m, s) => Math.max(m, s.weight), 0);
+    const best = g.slice().sort((a, b) => ((b.weight || 0) - (a.weight || 0)) || (b.reps - a.reps))[0];
+    const est = g.some(s => s.est) ? ' <span class="dim">(est.)</span>' : '';
+    return `<div class="exrow"><span style="flex:0 0 120px">${parseDate(k).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}${est}</span><span style="flex:0 0 50px">${cnt}</span><span style="flex:0 0 80px">${top ? +top.toFixed(1) : '—'}</span><span style="flex:1;white-space:nowrap">${wt(best)}${best.reps}</span><span style="flex:0 0 70px;text-align:right">${g.reduce((a, s) => a + s.reps, 0)}</span></div>`;
+  }).join('') : '<p class="dim">No earlier sets.</p>';
+  const last = sets[sets.length - 1];
+  screen(`<div class="card" style="position:relative"><button class="topback" id="back2" data-say="back">‹ Back</button><h3>${esc(ex.muscle)} · ${esc(ex.type)}${ex.oneSide ? ' · one side at a time' : ''}</h3><h1>${esc(name)}</h1>
+      <div class="row" style="align-items:flex-end"><div><div class="big">${fmtW(w.w)}</div><div class="dim">next set · ${esc(w.why)}</div></div>
+      <div><div class="big">${done}/${ex.quota}</div><div class="dim">sets this week</div></div>
+      <div><div class="big" style="font-size:44px">${last ? fmtD(last.t) : '—'}</div><div class="dim">last done</div></div></div></div>
+    <div class="cols" style="grid-template-columns:1fr 1.25fr"><div class="card"><h3>This week</h3><div style="max-height:330px;overflow:auto">${weekHtml}</div><button class="go mt sm" id="go" data-say="start" style="width:100%">Start ${esc(name)}</button></div>
+    <div class="card"><h3>Previous weeks</h3><div style="max-height:430px;overflow:auto;-webkit-overflow-scrolling:touch">${histHtml}</div></div></div>`);
+  on('go', () => { if (!sessionAlive()) watchGate(() => prep(name)); else prep(name); });
+  on('back', weekView); on('back2', weekView);
+}
+
+// Prepare a set (or a sitting of sets) for one exercise
+function prep(name, opts = {}) {
+  const ex = exByName(name); if (!ex) return home();
+  if (!sessionAlive()) newSession();
+  const sets = allSets(), evs = allEvents();
+  // hurt joint check
+  const js = jointState(ex, evs);
+  if (js && js.joints.length && !opts.jointOk) {
+    if (js.waiting) return nextUp([name]);
+    return jointCheck(ex, js.joints);
+  }
+  if (js && js.sore.length && !opts.lighter) opts = Object.assign({}, opts, { lighter: true, soreNote: js.sore.join(', ') + ' sore' });
+  SESSION.wOverride = SESSION.wOverride || {};
+  let w = (CUR && CUR.name === name && CUR.nextWeight !== undefined) ? { w: CUR.nextWeight, why: 'adjusted' }
+    : SESSION.wOverride[name] != null ? { w: SESSION.wOverride[name], why: 'your choice this session' } : weightFor(ex, sets);
+  if (opts.lighter && w.w != null) w = { w: Math.max(step(w.w), w.w - step(w.w)), why: opts.soreNote ? 'lighter first set: ' + opts.soreNote : 'lighter return set' };
+  const setNo = (SESSION.countBy[name] || 0) + 1;
+  // one-side: right first, sometimes left first (decided once per sitting)
+  let first = 'Right';
+  if (ex.oneSide) {
+    if (CUR && CUR.name === name && CUR.first) first = CUR.first;
+    else if (setting('Alternate First Side', 'Occasionally') !== 'Never' && Math.random() < 0.25) first = 'Left';
+  }
+  const prev = SESSION.log[SESSION.log.length - 1];
+  const changes = [];
+  if (!prev || prev.ex !== name) {
+    if (prev && prev.equip !== ex.equip) changes.push(`Setup: ${ex.equip}`);
+    if (w.w != null && (!prev || prev.weight !== w.w)) changes.push(`Weight: ${fmtW(w.w)}`);
+  } else if (w.w != null && prev.weight !== w.w) changes.push(`Change weight to ${fmtW(w.w)}`);
+  CUR = { name, ex, weight: w.w, why: w.why, setNo, first, side: ex.oneSide ? first : 'Both', sides: [], lighter: !!opts.lighter, nextWeight: undefined };
+  SESSION.type = SESSION.type || ex.type; saveSession();
+  const plan = planFor(name);
+  const note = plan && plan['Trainer Note'];
+  // push set: set 3 of the sitting, or the set that finishes this week's quota
+  const weekNo = doneThisWeek(name, sets) + 1;
+  const pushSet = setNo >= 3 || weekNo === ex.quota;
+  CUR.push = pushSet; CUR.pushWhy = setNo >= 3 ? 'Last set' : `Set ${weekNo} of ${ex.quota} this week`;
+  // no spoken intro here: it ran into the countdown and callouts. The screen shows the exercise, weight and setup.
+  screen(`<div class="side"><div class="card" style="margin:0"><h3>Set ${setNo} · ${esc(ex.muscle)}${ex.oneSide ? ` · ${first} side first` : ''}</h3>${pushSet ? '<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:24px;margin:4px 0 8px">🔥 ' + CUR.pushWhy + ': push it. See how many you can get.</div>' : ''}<h1>${esc(name)}</h1>
+     ${w.w == null ? `<div class="big">${fmtW(w.w)}</div>` : `<div style="display:flex;align-items:center;gap:18px"><button class="sm" id="wm" style="min-width:90px;font-size:44px">−</button><div class="big" id="wv">${fmtW(w.w)}</div><button class="sm" id="wp" style="min-width:90px;font-size:44px">+</button></div>`}
+     <div id="pbBox">${pbHtml(w.w)}</div><div class="dim" id="wwhy">${esc(w.why)}${CUR.lighter ? ' · go easy' : ''}</div>
+     ${changes.length ? `<div class="change">${changes.map(esc).join(' · ')}</div>` : ''}
+     <div class="setup mt">${esc(ex.setup)}</div><div class="cue">${esc(ex.cue)}</div>
+     ${note ? `<div class="cue">Trainer: ${esc(note)}</div>` : ''}
+     <div class="dim mt">${ex.repMin}–${ex.repMax} reps · about ${ex.target}s · tempo ${esc(ex.tempo)}, ${+repPlan(ex).total.toFixed(1)}s per rep with pauses</div></div>
+     <div class="stack"><button class="go" id="go" style="flex:1 1 auto;font-size:56px;min-height:260px">GO</button>
+       <button class="sm" id="skip">Skip</button><button class="sm" id="other" data-say="different">Different exercise</button><button class="sm stop" id="end">End session</button></div></div>
+     <div class="heard center"></div>`,
+    { ready: () => startSet(), skip: () => skipFlow(name), end: endFlow });
+  on('go', () => startSet()); on('skip', () => skipFlow(name)); on('other', pickExercise); on('end', endFlow);
+  const bump = dir => {
+    const cur = CUR.weight, st = step(cur);
+    const nw = Math.max(st, +(cur + dir * st).toFixed(1));
+    CUR.weight = nw; SESSION.wOverride[name] = nw; saveSession();
+    document.getElementById('wv').textContent = fmtW(nw);
+    document.getElementById('pbBox').innerHTML = pbHtml(nw);
+    document.getElementById('wwhy').textContent = 'your choice this session';
+    clearTimeout(CUR.wLogT); CUR.wLogT = setTimeout(() => CUR.weight !== w.w && event('weight_change', name, '', 'set by ' + PERSON, `${fmtW(w.w)} → ${fmtW(nw)} for this session`), 4000);
+  };
+  on('wm', () => bump(-1)); on('wp', () => bump(1));
+}
+
+function jointCheck(ex, joints) {
+  speak(`Your ${joints.join(' and ')} was flagged. Check in before you lift.`);
+  screen(`<div class="card"><h3>Joint check</h3><h1>${esc(ex.name)}</h1><p style="font-size:28px">Your <b class="warn">${joints.map(esc).join(', ')}</b> was flagged. Good to try this now?</p></div>
+    <div class="row"><button class="go" id="y" data-say="try">Try it (lighter)</button><button id="n">Wait</button></div>
+    <div class="mt"><button class="sm" id="clr" style="width:100%" data-say="clear">It’s fine now, set it to good</button></div><div class="heard center"></div>`,
+    { yes: tryIt, no: wait });
+  function tryIt() { event('joint_try', ex.name, joints.join(', ')); prep(ex.name, { jointOk: true, lighter: true }); }
+  function wait() { event('joint_wait', ex.name, joints.join(', ')); toast(`Won't ask about ${ex.name} for ${setting('Injury Recheck (h)', 48)} hours`); nextUp([ex.name]); }
+  on('y', tryIt); on('n', wait);
+  on('clr', () => { joints.forEach(j => setBody(j, 'good', 'cleared at joint check')); prep(ex.name, { jointOk: true }); });
+}
+
+// Tempo guide. Each rep = first move, hold, second move, hold. "Sec per Rep" is movement time; holds are added.
+const upFrac = t => /1\/3 up/i.test(t) ? 1 / 3 : /2\/3 up/i.test(t) ? 2 / 3 : 0.5;
+const DOWN_FIRST = new Set(['Squats']);   // exercises that start at the top
+const downFirst = ex => ex.starts ? /down/i.test(ex.starts) : DOWN_FIRST.has(ex.name);
+function repPlan(ex) {
+  const hold = ex.hold ?? setting('Pause at Turn (s)', 0.5), mv = ex.spr, uf = upFrac(ex.tempo);
+  const up = { kind: 'UP', t: mv * uf, from: 0, to: 1 }, dn = { kind: 'DOWN', t: mv * (1 - uf), from: 1, to: 0 };
+  const seq = downFirst(ex) ? [dn, { kind: 'HOLD', t: hold, at: 0 }, up, { kind: 'HOLD', t: hold, at: 1 }]
+                            : [up, { kind: 'HOLD', t: hold, at: 1 }, dn, { kind: 'HOLD', t: hold, at: 0 }];
+  return { seq, total: seq.reduce((a, p) => a + p.t, 0) };
+}
+let setTimer = null;
+// PowerBlock Pro 50 setup: pin bands add 5 lb from 10 (handle + both chrome adders); each chrome adder is 2.5 lb
+const PB_BANDS = { 15: 'white-outline', 20: 'white', 25: 'orange', 30: 'green', 35: 'yellow', 40: 'blue', 45: 'red', 50: 'gray' };
+const PB_DOT = { 'white-outline': 'background:transparent;border:3px solid #fff', white: 'background:#fff', orange: 'background:#f08a3c', green: 'background:#3ecf6e', yellow: 'background:#f5d33d', blue: 'background:#3d8bf5', red: 'background:#e5484d', gray: 'background:#9aa0a6' };
+function pbSetup(w) {
+  if (w == null || setting('Dumbbells', 'PowerBlock Pro 50') !== 'PowerBlock Pro 50') return null;
+  const r = Math.round(w * 2) / 2;
+  if (r < 5 || r > 50) return null;
+  let pin = Math.ceil(r / 5) * 5, out = Math.round((pin - r) / 2.5);   // weights ending in 2.5 drop one chrome adder
+  if (r % 2.5) return null;                                            // not reachable on the PowerBlock
+  if (pin < 10) { pin = 10; out = Math.round((10 - r) / 2.5); }
+  const band = pin === 10 ? 'handle' : PB_BANDS[pin];
+  const chrome = out === 0 ? 'both chrome weights in' : out === 1 ? 'take out 1 chrome weight' : 'take out both chrome weights';
+  return { band, text: `${pin === 10 ? 'Pin: handle only (no band)' : `Pin: ${band.replace('-', ' ')} band (${pin})`} · ${chrome}` };
+}
+const pbHtml = w => { const p = pbSetup(w); return p ? `<div class="pb" style="font-size:26px;margin-top:6px">${p.band !== 'handle' ? `<span style="display:inline-block;width:26px;height:26px;border-radius:6px;vertical-align:-4px;margin-right:8px;${PB_DOT[p.band]}"></span>` : ''}${esc(p.text)}</div>` : ''; };
+
+// Form tips: one at a time, rotating so each set shows a different reminder
+function nextTip(ex) {
+  if (!ex || !ex.tips || !ex.tips.length) return '';
+  const k = (local.tip && local.tip[ex.name]) || 0;
+  local.tip = local.tip || {}; local.tip[ex.name] = k + 1; LS.set('local', local);
+  return ex.tips[k % ex.tips.length];
+}
+const tipHtml = t => t ? `<div class="tip" style="background:#16283a;border-left:6px solid var(--acc);border-radius:14px;padding:12px 16px;font-size:28px;margin-top:10px">🎯 ${esc(t)}</div>` : '';
+
+// Set screen. The get-set countdown runs in the clock spot while the tempo guide previews the pace the whole time,
+// phased so a rep finishes exactly at 0 and the first real rep follows straight on.
+// Saying "go" early moves 0 to the end of the preview rep in progress (at least 1 s away), so it stays in sync.
+function startSet(short) { runSet(short ? 3 : setting('Get Set (s)', 5)); }
+function runSet(getSet = 0) {
+  try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch {}   // nothing left talking when the set starts
+  const ex = CUR.ex, plan = repPlan(ex), P = plan.total;
+  CUR.repSecs = P; CUR.start = null;
+  let zero = Date.now() + getSet * 1000;          // when the set clock hits 0
+  const colors = { UP: 'var(--acc)', DOWN: '#f08a3c', HOLD: '#6b7280' };
+  let beat = '';
+  if (CUR.push) {
+    const prev = allSets().filter(x => x.ex === CUR.name && x.reps != null && x.weight === CUR.weight && x.session !== SESSION.id && (!ex.oneSide || x.side === CUR.side));
+    const best = prev.reduce((m, x) => Math.max(m, x.reps), 0);
+    beat = `<div class="change" style="background:#3b1f4d;color:#e7b6ff;font-size:26px;margin:4px 0">🔥 ${CUR.pushWhy}: push it${best ? ` · beat ${best}` : ''}</div>`;
+  }
+  const tipA = nextTip(ex);
+  screen(`<div class="row" style="align-items:center"><div style="flex:2"><h3>${esc(CUR.name)}${ex.oneSide ? ` · ${CUR.side} side` : ''} · ${fmtW(CUR.weight)}</h3>${beat}
+      <div class="huge" id="clock" style="${getSet ? 'color:#f5b53d' : ''}">${getSet || 0}</div><div class="dim" style="font-size:26px" id="clockLbl">${getSet ? 'get set… match the pace →' : 'seconds · target ' + ex.target + 's'}</div>
+      <div class="big mt" id="reps">0</div><div class="dim">reps at the guide's pace (${+P.toFixed(1)}s each)</div>
+      <div id="tipBox">${tipHtml(tipA)}</div></div>
+      <div style="flex:1"><div id="tempo" style="height:440px;width:170px"><i id="tb"></i></div><div id="tempoLbl" style="font-size:40px">—</div></div></div>
+      <button class="stop mt" id="done" style="width:100%;font-size:48px;min-height:150px">${getSet ? 'START NOW' : 'DONE'}</button><div class="heard center"></div>`,
+    getSet ? { ready: goEarly } : { done: saidDone });
+  on('done', () => CUR.start ? finishSet() : goEarly());
+  function saidDone() { if (Date.now() < (V.calloutUntil || 0)) return vlog('done', 'ignored: right after a pace callout'); finishSet(); }
+  // pace callouts like a trainer (reps 1–3 and 7–8, only when each move is long enough to say) and metronome ticks.
+  // On a push set both stop about halfway through the length of your previous set of this exercise, where fatigue sets in.
+  const coOn = setting('Voice Pacing', 'On') !== 'Off' && plan.seq.filter(p => p.kind !== 'HOLD').every(p => p.t >= 0.8);
+  const tickOn = setting('Metronome', 'On') !== 'Off';
+  const coReps = new Set([0, 1, 2, 6, 7]);
+  // pacing runs to about rep 10 (or close to the target time), then goes quiet so the mic can hear "done"
+  let paceUntil = Math.max(10 * P, ex.target - 8), pushCalled = false;
+  const paceOn = coOn || tickOn;
+  if (CUR.push) {
+    const mine = allSets().filter(x => x.ex === CUR.name && x.dur && (!ex.oneSide || x.side === CUR.side)).sort((a, b) => b.t - a.t);
+    const prior = mine.find(x => x.session === SESSION.id) || mine[0];
+    paceUntil = Math.min(paceUntil, 0.5 * ((prior && prior.dur) || ex.target));
+  }
+  let resumed = false;
+  const lastPh = plan.seq[plan.seq.length - 1], endHold = lastPh.kind === 'HOLD' ? lastPh.t : 0;
+  let beeped = false, lastKind = '', lastCount = getSet, tipB = false;
+  function goEarly() {
+    if (CUR.start) return;
+    const t = (Date.now() - zero) / 1000;           // negative during the countdown
+    let left = ((-t) % P + P) % P;                   // time until the preview rep in progress finishes
+    if (left < 1) left += P;
+    zero = Date.now() + left * 1000;
+    lastCount = -1;
+  }
+  function begin() {
+    CUR.start = zero;                  // no start tone: it ran over the first "Down!"
+    if (paceOn) micPause();
+    const c = document.getElementById('clock'); if (c) c.style.color = '';
+    const l = document.getElementById('clockLbl'); if (l) l.textContent = 'seconds · target ' + ex.target + 's';
+    const btn = document.getElementById('done'); if (btn) btn.textContent = 'DONE';
+    V.handlers = { done: saidDone }; V.utt = []; V.screenAt = Date.now(); annotate();
+  }
+  clearInterval(setTimer);
+  if (!getSet) begin();
+  setTimer = setInterval(() => {
+    const c = document.getElementById('clock'); if (!c) return clearInterval(setTimer);
+    const t = (Date.now() - zero) / 1000;
+    let pos, kind;
+    if (t < 0) {                                     // countdown
+      const n = Math.ceil(-t);
+      if (n !== lastCount) { lastCount = n; c.textContent = n; }   // no 3-2-1 beeps
+      const ph = phaseAt(((t % P) + P) % P); pos = ph.pos; kind = ph.kind;   // preview, phased to land on 0
+    } else {
+      if (!CUR.start) begin();
+      c.textContent = Math.floor(t);
+      document.getElementById('reps').textContent = Math.floor((t + endHold) / P);   // counts when you reach the end of the rep, not after the pause
+      const ph = phaseAt(t % P); pos = ph.pos; kind = ph.kind;
+      if (!beeped && t >= ex.target) { beeped = true; beep(1046, 250); c.classList.add('ok'); }
+      if (!resumed && paceOn && t >= paceUntil + (CUR.push ? 2.5 : 0.3)) { resumed = true; micResume('after pacing'); const l = document.getElementById('clockLbl'); if (l) l.textContent = 'say “done” when you finish'; }
+      if (!tipB && t >= 15 && ex.tips && ex.tips.length > 1) { tipB = true; const tb = document.getElementById('tipBox'); if (tb) tb.innerHTML = tipHtml(nextTip(ex)); }
+    }
+    const bar = document.getElementById('tb');
+    bar.style.height = (8 + pos * 92) + '%'; bar.style.background = colors[kind] || '#6b7280';
+    const lbl = document.getElementById('tempoLbl');
+    if (kind !== lastKind) {
+      lbl.textContent = kind; lbl.style.color = colors[kind] || 'var(--dim)'; lastKind = kind;
+      if (!pushCalled && CUR.push && paceOn && t >= paceUntil) { pushCalled = true; callout('Push yourself and max this set!'); }
+      if ((kind === 'UP' || kind === 'DOWN') && t < paceUntil) {
+        if (coOn && t >= 0 && coReps.has(Math.floor(t / P))) callout(kind === 'UP' ? 'Up!' : 'Down!');
+        else if (tickOn && t >= 0) tick(kind === 'UP');     // no ticks in the countdown, so "go" can still be heard
+      }
+    }
+  }, 40);
+  function phaseAt(t) {
+    let ph = plan.seq[0];
+    for (const p of plan.seq) { if (t < p.t) { ph = p; break; } t -= p.t; }
+    return { kind: ph.kind, pos: ph.kind === 'HOLD' ? ph.at : ph.from + (ph.to - ph.from) * Math.min(1, t / ph.t) };
+  }
+}
+function finishSet() {
+  clearInterval(setTimer);
+  CUR.doneAt = Date.now();                 // rest counts from here
+  CUR.dur = Math.round((CUR.doneAt - CUR.start) / 1000);
+  CUR.est = Math.max(1, Math.round(CUR.dur / (CUR.repSecs || CUR.ex.spr)));
+  repsScreen();
+}
+function repsScreen() {
+  let reps = CUR.est;
+  const draw = () => { document.getElementById('rv').textContent = reps; };
+  // no spoken prompt here: you just said done, and talking now can leave the mic deaf for your answer
+  screen(`<div class="center"><h3>${esc(CUR.name)}${CUR.ex.oneSide ? ` · ${CUR.side} side` : ''} · ${CUR.dur}s</h3><h2>How many reps?</h2>
+    <div class="row" style="align-items:center"><button id="m" data-say="-" style="flex:0 0 160px;font-size:60px">−</button><div class="huge" id="rv">${reps}</div><button id="p" data-say="-" style="flex:0 0 160px;font-size:60px">+</button></div>
+    <button class="go mt" id="ok" style="width:100%" data-say="save">Save reps</button><div class="heard"></div></div>
+    <div id="confirm" style="display:none;position:fixed;inset:0;z-index:50;background:rgba(5,6,10,.94);align-items:center;justify-content:center;flex-direction:column;gap:30px">
+      <div style="font-size:44px;color:var(--dim)">${esc(CUR.name)}${CUR.ex.oneSide ? ` · ${CUR.side}` : ''}</div>
+      <div style="font-size:150px;font-weight:800;line-height:1"><span id="cv">0</span> <span style="font-size:70px">reps?</span></div>
+      <div class="row" style="width:86%;gap:24px"><button class="go" id="cy" data-say="yes" style="flex:2;font-size:64px;min-height:190px">YES</button><button id="cn" data-say="no" style="flex:1;font-size:56px;min-height:190px">NO</button></div>
+      <div class="dim" style="font-size:26px">Say “yes”, “no”, or another number</div><div class="heard"></div></div>`,
+    { number: n => {
+        // "thirty" … "six" heard as two phrases: a single digit right after a tens number joins it (30 + 6 = 36)
+        if (n < 10 && lastTens && Date.now() - lastTens.at < 2500) n += lastTens.n;
+        lastTens = (n >= 20 && n % 10 === 0) ? { n, at: Date.now() } : null;
+        ask(n);
+      }, yes: () => save(), no: () => unask() });
+  let lastTens = null;
+  on('m', () => { reps = Math.max(0, reps - 1); draw(); }); on('p', () => { reps++; draw(); }); on('ok', save);
+  on('cy', save); on('cn', unask);
+  function ask(n) { reps = n; draw(); const c = document.getElementById('confirm'); document.getElementById('cv').textContent = n; c.style.display = 'flex'; }   // no speech here: talking restarts the mic right when you answer
+  function unask() { const c = document.getElementById('confirm'); if (c) c.style.display = 'none'; }
+  let saved = false;
+  function save() {
+    if (saved) return; saved = true;
+    CUR.sides.push({ side: CUR.side, reps, dur: CUR.dur });
+    if (CUR.ex.oneSide && CUR.sides.length === 1) {
+      CUR.side = CUR.first === 'Right' ? 'Left' : 'Right';
+      say(['side_' + CUR.side.toLowerCase()], `${CUR.side} side.`);
+      screen(`<div class="center" style="padding-top:30px"><h3>No rest, switch sides</h3><h1>${CUR.side} side</h1><div class="big">${fmtW(CUR.weight)}</div>
+        <button class="go mt" id="go" style="width:100%;font-size:44px;min-height:150px">GO</button><div class="heard"></div></div>`, { ready: () => startSet(true) });
+      on('go', () => startSet(true));
+      return;
+    }
+    effortScreen();
+  }
+}
+function effortScreen() {
+  let off = false;
+  // no spoken prompt: talking here left the mic deaf for your first answer
+  screen(`<div class="center"><h2>How many reps did you have left?</h2>
+    <div class="chips"><button id="r0">0</button><button id="r2">2</button><button id="r4">4+</button></div>
+    <button class="mt sm" id="off" style="width:100%" data-say="off">⚠️ This felt off (pain or odd fatigue)</button><div class="heard"></div></div>`,
+    { number: n => { if (n >= 10 && /^(\d)\1+$/.test(String(n))) n = n % 10;   // "one" said twice can come through as 11
+        pick(n >= 4 ? '4+' : n >= 2 ? '2' : '0'); } });
+  on('r0', () => pick('0')); on('r2', () => pick('2')); on('r4', () => pick('4+'));
+  on('off', () => { off = !off; document.getElementById('off').classList.toggle('sel', off); });
+  function pick(rir) {
+    CUR.rir = rir; CUR.off = off;
+    const last = (SESSION.countBy[CUR.name] || 0) + 1 >= 3;
+    const checked = local.tempoChecked[CUR.name] || 0;
+    if (last && Date.now() - checked > 7 * DAY) tempoScreen(); else commit('');
+  }
+}
+function tempoScreen() {
+  const t = CUR.ex.tempo;
+  // no spoken prompt
+  screen(`<div class="center"><h2>Did the tempo fit?</h2><p class="dim">Now: ${esc(t)}, ${CUR.ex.spr}s per rep</p>
+    <button class="go" id="g" style="width:100%" data-say="right">Felt right</button>
+    <h3 class="mt">Or switch the pattern</h3><div class="chips"><button class="sm" data-t="Even" data-say="even">Even up and down</button><button class="sm" data-t="1/3 up 2/3 down" data-say="slow down">Slow down (⅓ up, ⅔ down)</button><button class="sm" data-t="2/3 up 1/3 down" data-say="slow up">Slow up (⅔ up, ⅓ down)</button></div>
+    <div class="chips mt"><button class="sm" data-s="-0.5">Faster reps</button><button class="sm" data-s="0.5">Slower reps</button></div><div class="heard"></div></div>`,
+    { yes: () => done('Good') });
+  on('g', () => done('Good'));
+  document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { const v = b.dataset.t; api({ action: 'updateExercise', exercise: CUR.name, field: 'Tempo', value: v }).then(() => loadState(true)).catch(() => {}); done('Changed to ' + v); });
+  document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const v = Math.max(1.5, CUR.ex.spr + (+b.dataset.s)); api({ action: 'updateExercise', exercise: CUR.name, field: 'Sec per Rep', value: v }).then(() => loadState(true)).catch(() => {}); done(`Changed to ${v}s per rep`); });
+  function done(fit) { local.tempoChecked[CUR.name] = Date.now(); LS.set('local', local); commit(fit); }
+}
+
+// Save the set (both sides for one-side exercises), then rest
+function commit(tempoFit) {
+  const d = new Date(), ex = CUR.ex;
+  const lvBefore = levelFor(xpTotal()); CUR.xpGain = 0; CUR.levelUp = null;
+  SESSION.countBy[CUR.name] = (SESSION.countBy[CUR.name] || 0) + 1;
+  const setNo = SESSION.countBy[CUR.name];
+  const order = CUR.sides.slice().sort((a, b) => (a.side === 'Right' ? -1 : 1) - (b.side === 'Right' ? -1 : 1));
+  const notes = [CUR.lighter ? 'lighter return set' : '', CUR.why === 'adjusted' ? 'weight changed mid-session' : '', ex.oneSide && CUR.first === 'Left' ? 'left side first' : ''].filter(Boolean).join('; ');
+  order.forEach(s => queue('Sets', [dstr(d), 'No', ex.type, CUR.name, setNo, s.side, CUR.weight == null ? '' : CUR.weight, s.reps, '', notes, SESSION.id, tstr(d), s.dur, CUR.rir, CUR.off ? 'Yes' : '', tempoFit, 'App', uid()]));
+  const reps = Math.min(...CUR.sides.map(s => s.reps)), dur = CUR.sides.reduce((a, s) => a + s.dur, 0);
+  SESSION.log.push({ ex: CUR.name, equip: ex.equip, weight: CUR.weight, reps: CUR.sides.map(s => s.reps).join('/'), dur, rir: CUR.rir, off: CUR.off });
+  SESSION.lastEx = CUR.name; SESSION.lastAt = Date.now();
+  // personal record: heavier than ever, or more reps than ever at this weight
+  checkPR(reps);
+  xpAfterSet(lvBefore);
+  SESSION.xp = (SESSION.xp || 0) + (CUR.xpGain || 0);
+  // mid-session tweak only when a set is wildly off; "felt off" holds the weight
+  let tweak = null;
+  if (!CUR.off && CUR.weight != null) {
+    if (reps >= ex.repMax + 4) tweak = { w: CUR.weight + step(CUR.weight), msg: `That was well over ${ex.repMax}. Go up to` };
+    else if (reps <= ex.repMin - 5) tweak = { w: Math.max(step(CUR.weight), CUR.weight - step(CUR.weight)), msg: `That was well under ${ex.repMin}. Drop to` };
+  }
+  saveSession();
+  rest(tweak);
+}
+function checkPR(reps) {
+  if (CUR.weight == null) return;
+  const prior = allSets().filter(s => s.ex === CUR.name && s.reps != null && !(s.session === SESSION.id));
+  if (!prior.length) return;
+  const maxW = Math.max(...prior.map(s => s.weight || 0));
+  const atW = prior.filter(s => s.weight === CUR.weight).map(s => s.reps);
+  let pr = null;
+  if (CUR.weight > maxW) pr = `Heaviest ever: ${fmtW(CUR.weight)}`;
+  else if (atW.length && reps > Math.max(...atW)) pr = `Most reps at ${fmtW(CUR.weight)}: ${reps}`;
+  if (pr && !SESSION.prs.some(p => p.startsWith(CUR.name))) {
+    SESSION.prs.push(`${CUR.name}: ${pr}`);
+    queue('Progress', [dstr(new Date()), 'PR', CUR.name, pr, uid()]);
+    toast('🏆 ' + pr);
+  }
+}
+
+let restTimer = null;
+function rest(tweak) {
+  const secs = setting('Rest Between Sets (s)', 60);
+  const endAt = (CUR.doneAt || Date.now()) + secs * 1000;   // rest started when you said done
+  const n = whatsNext({});
+  const p = n.pick;
+  let nextHtml = '<h2>That’s everything for now</h2>';
+  let nextName = null, nextSay = '', nextKeys = [];
+  if (p) {
+    nextName = p.ex.name;
+    const same = p.ex.name === CUR.name;
+    const w = same ? CUR.weight : (SESSION.wOverride && SESSION.wOverride[p.ex.name] != null ? SESSION.wOverride[p.ex.name] : weightFor(p.ex, n.sets).w);
+    const chg = [];
+    if (!same && p.ex.equip !== CUR.ex.equip) chg.push(p.ex.equip);
+    if (w !== CUR.weight && w != null) chg.push(`${fmtW(w)} dumbbell${p.ex.oneSide ? '' : 's'}`);
+    const k = same ? (SESSION.countBy[CUR.name] || 0) + 1 : (SESSION.countBy[p.ex.name] || 0) + 1;
+    const push = k >= 3 || doneThisWeek(p.ex.name, n.sets) + 1 === p.ex.quota;
+    nextSay = `Set ${k}${k <= 3 ? ' of 3' : ''}${push ? ', push set' : ''}`;
+    nextKeys = [k <= 3 ? 'set_' + k : 'set_n', push ? 'push_set' : null, exKey(p.ex.name)];
+    const banner = `<div style="font-size:${push ? 64 : 58}px;font-weight:800;line-height:1.05;margin:2px 0 8px;color:${push ? '#e7b6ff' : 'var(--acc)'}">${push ? '🔥 ' : ''}SET ${k}${k <= 3 ? ` <span style="font-size:.55em;color:var(--dim)">of 3</span>` : ''}${push ? ' <span style="font-size:.5em">· PUSH SET</span>' : ''}</div>`;
+    nextHtml = `${banner}<h3>${same ? 'Next set' : 'Next exercise'}</h3><h1>${esc(p.ex.name)}</h1><div class="big" id="nw">${fmtW(w)}</div><div id="npb">${pbHtml(w)}</div><div id="nchg">${chg.length ? `<div class="change">Change: ${chg.map(esc).join(' · ')}</div>` : ''}</div><div class="setup mt">${same ? '' : esc(p.ex.setup)}</div>${tipHtml(nextTip(p.ex))}`;
+  }
+  const xpLine = CUR.levelUp ? `<div style="font-size:30px;font-weight:800;color:#ffd166;margin-top:6px">⭐ LEVEL ${CUR.levelUp.L}!<br><span style="font-size:22px">${esc(CUR.levelUp.title)}</span></div>` : CUR.xpGain ? `<div style="font-size:28px;font-weight:700;color:#ffd166;margin-top:6px">+${CUR.xpGain} XP</div>` : '';
+  screen(`<div class="row"><div class="card center" style="flex:0 0 300px"><h3>Rest</h3><div class="huge" id="rc">${secs}</div>${xpLine}</div><div class="card">${nextHtml}</div></div>
+    ${tweak && p && p.ex.name === CUR.name ? `<div class="card"><b>${tweak.msg} ${fmtW(tweak.w)}?</b><div class="row mt"><button class="sm go" id="ty">Yes, change it</button><button class="sm" id="tn">Keep ${fmtW(CUR.weight)}</button></div></div>` : ''}
+    <div class="row"><button class="go" id="go">Ready</button><button id="skip" data-say="skip">Skip that</button><button class="stop" id="end">End session</button></div><div class="heard center"></div>`,
+    { ready: goNext, skip: () => nextName && skipFlow(nextName), end: endFlow, next: goNext });
+  if (tweak) { on('ty', () => { CUR.nextWeight = tweak.w; toast(`Next set: ${fmtW(tweak.w)}`); const nw = document.getElementById('nw'); if (nw) nw.textContent = fmtW(tweak.w); const npb = document.getElementById('npb'); if (npb) npb.innerHTML = pbHtml(tweak.w); const nc = document.getElementById('nchg'); if (nc) nc.innerHTML = `<div class="change">Change: ${fmtW(tweak.w)} dumbbells</div>`; document.getElementById('ty').parentElement.parentElement.remove(); }); on('tn', () => { CUR.nextWeight = undefined; document.getElementById('tn').parentElement.parentElement.remove(); }); }
+  on('go', goNext); on('skip', () => nextName && skipFlow(nextName)); on('end', endFlow);
+  clearInterval(restTimer);
+  if (CUR.levelUp) say(['level_up'], `Level up! Level ${CUR.levelUp.L}, ${CUR.levelUp.title}.`);   // otherwise rest starts quietly
+  let rung = false;
+  restTimer = setInterval(() => {
+    const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+    const el = document.getElementById('rc'); if (!el) return clearInterval(restTimer);
+    el.textContent = left;
+    if (left === 0 && !rung) { rung = true; beep(880); setTimeout(() => beep(1175), 200); say(['rest_up'].concat(nextName ? nextKeys : []), nextName ? `Rest is up. ${nextSay}. ${nextName}.` : 'Rest is up.'); }
+  }, 250);
+  function goNext() { clearInterval(restTimer); if (!nextName) { event('session_end', '', '', 'Nothing left', `${SESSION.log.length} sets`); return watchEnd(summary); } if (nextName !== CUR.name) CUR.nextWeight = undefined; prep(nextName); }
+}
+function nextUp(exclude) {
+  const n = whatsNext({ exclude: (SESSION ? SESSION.skipped : []).concat(exclude || []), moveOn: true });
+  if (!n.pick) { toast('Nothing else available right now'); if (SESSION && SESSION.log.length) { event('session_end', '', '', 'Nothing left', `${SESSION.log.length} sets`); return watchEnd(summary); } return home(); }
+  prep(n.pick.ex.name);
+}
+
+const SKIP_REASONS = ['Too tired', 'Joint hurts', 'Short on time', 'Equipment', 'Not feeling it', 'Other'];
+const REASON_SAY = { 'Too tired': 'tired', 'Joint hurts': 'joint', 'Short on time': 'time', 'Equipment': 'equipment', 'Not feeling it': 'feeling', 'Other': 'other', 'Done for now': 'done', 'Something hurts': 'hurts', 'Out of time': 'time' };
+function skipFlow(name) {
+  clearInterval(restTimer);
+  // no spoken prompt
+  screen(`<h2>Why skip ${esc(name)}?</h2><div class="chips">${SKIP_REASONS.map(r => `<button data-r="${r}" data-say="${REASON_SAY[r]}">${r}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Never mind</button>`);
+  document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
+    const r = b.dataset.r;
+    const fin = joint => { event('skip', name, joint || '', r); if (joint) setBody(joint, 'hurt', 'flagged on skip'); SESSION.skipped.push(name); saveSession(); nextUp([name]); };
+    if (r === 'Joint hurts') jointPicker(fin); else fin('');
+  });
+  on('back', () => prep(name));
+}
+function jointPicker(cb) {
+  screen(`<h2>Which area hurts?</h2><div class="grid2" style="grid-template-columns:repeat(3,1fr)">${REGIONS.map(r => `<button class="sm" data-j="${r.label}">${r.label}</button>`).join('')}</div><button class="mt sm" id="back" style="width:100%">Back</button>`);
+  document.querySelectorAll('[data-j]').forEach(b => b.onclick = () => cb(b.dataset.j));
+  on('back', home);
+}
+const QUIT_REASONS = ['Done for now', 'Too tired', 'Something hurts', 'Out of time', 'Other'];
+function endFlow() {
+  clearInterval(restTimer); clearInterval(setTimer);
+  if (!SESSION || !SESSION.log.length) { SESSION = null; LS.set('session', null); return home(); }
+  screen(`<h2>Wrapping up. Why stop here?</h2><div class="chips">${QUIT_REASONS.map(r => `<button data-r="${r}" data-say="${REASON_SAY[r]}">${r}</button>`).join('')}</div>`, { yes: () => finish('Done for now') });
+  document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { const r = b.dataset.r; if (r === 'Something hurts') jointPicker(j => { setBody(j, 'hurt', 'flagged on quit'); finish(r); }); else finish(r); });
+  function finish(r) { event('session_end', '', '', r, `${SESSION.log.length} sets`); watchEnd(summary); }
+}
+function watchEnd(next) {
+  if (SESSION && SESSION.noWatch) return noWatchCalories(next);
+  if (setting('Watch Reminder', 'Yes') !== 'Yes') return next();
+  // no spoken reminder: the screen is enough
+  screen(`<div class="center" style="padding-top:40px"><div style="font-size:120px">⌚️</div><h1>End your Apple Watch workout</h1><p class="dim" style="font-size:26px">Swipe right on the watch and tap End. Keep the summary showing for the next step.</p>
+    <button class="go mt" id="ok" style="width:70%" data-say="stopped">Watch is stopped</button><div class="heard"></div></div>`, { yes: ok });
+  function ok() { event('watch_end', '', '', '', 'watch stopped'); caloriesScreen(next); }
+  on('ok', ok);
+}
+// No watch: let the trainer estimate the calories from your watch history and this session's length, or skip
+function noWatchCalories(next) {
+  const mins = Math.max(1, Math.round((Date.now() - SESSION.start) / 60000));
+  // no spoken prompt: the screen is enough
+  screen(`<div class="center" style="padding-top:40px"><div style="font-size:100px">🧮</div><h1>No watch today</h1>
+    <p class="dim" style="font-size:26px">${mins} minutes, ${SESSION.log.length} sets. Your trainer can estimate the calories from your past watch sessions and add them to your Food Log.</p>
+    <div class="row mt" style="width:80%;margin-left:10%"><button class="go" id="est" data-say="estimate">Let trainer estimate</button><button id="skip" data-say="skip">Skip</button></div><div class="heard"></div></div>`, { yes: est });
+  function est() { event('watch_calories', '', '', 'estimate', `${mins} min, ${SESSION.log.length} sets, no watch, estimate requested`); toast('Your trainer will estimate it'); next(); }
+  on('est', est);
+  on('skip', () => { event('watch_calories', '', '', '', 'no watch, skipped'); next(); });
+}
+// Active calories from the watch summary; Claude adds them to the Food Log (and Lose It! for Josh)
+function parseCalories(toks) {
+  const small = Object.assign({}, NUMW, { thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 });
+  let total = 0, cur = 0, any = false, hundred = false;
+  for (const w of toks) {
+    if (/^\d+$/.test(w)) { cur += +w; any = true; }
+    else if (w === 'hundred') { cur = (cur || 1) * 100; any = true; hundred = true; }
+    else if (small[w] != null && !['to', 'too', 'for', 'none'].includes(w)) {
+      const v = small[w];
+      if (cur > 0 && cur < 10 && v >= 10 && !hundred) cur = cur * 100 + v;   // "one twenty" = 120
+      else cur += v;
+      any = true;
+    }
+  }
+  total += cur;
+  return any && total > 0 && total < 3000 ? total : null;
+}
+function caloriesScreen(next) {
+  let cal = '';
+  const draw = () => { document.getElementById('cv').textContent = cal || '—'; };
+  // no spoken prompt
+  screen(`<div class="center"><h2>Active calories on the watch summary?</h2>
+    <div class="huge" id="cv">—</div>
+    <div class="grid2 mt" style="grid-template-columns:repeat(5,1fr)">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map(d => `<button class="sm" data-d="${d}" data-say="-">${d}</button>`).join('')}</div>
+    <div class="row mt"><button class="sm" id="clr" data-say="clear">Clear</button><button class="go" id="save" data-say="save">Save</button><button class="sm" id="skip" data-say="skip">Skip</button></div><div class="heard"></div></div>`,
+    { number: () => {} });
+  // spoken numbers can be several words ("one twenty", "one hundred twenty", "120")
+  V.handlers = { custom: true };
+  let lastCal = null;   // "thirty" … "six" heard as two phrases: a digit (or tens) right after joins it (30 + 6 = 36, 100 + 20 = 120)
+  V.customDecide = toks => {
+    let n = parseCalories(toks); if (!n) return null;
+    if (lastCal && Date.now() - lastCal.at < 2500 && ((lastCal.n % 10 === 0 && n < 10) || (lastCal.n % 100 === 0 && n < 100))) n += lastCal.n;
+    lastCal = { n, at: Date.now() };
+    cal = String(n); draw(); return 'calories ' + n;
+  };
+  document.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { if (cal.length < 4) cal += b.dataset.d; draw(); });
+  on('clr', () => { cal = ''; draw(); });
+  on('save', () => {
+    if (!cal) return toast('Enter the calories or tap Skip');
+    const mins = SESSION ? Math.round((Date.now() - SESSION.start) / 60000) : '';
+    event('watch_calories', '', '', cal, `${mins} min, ${SESSION ? SESSION.log.length : 0} sets, not yet in Food Log`);
+    V.customDecide = null; toast(`${cal} calories saved for your Food Log`); next();
+  });
+  on('skip', () => { V.customDecide = null; event('watch_calories', '', '', '', 'skipped'); next(); });
+}
+function summary() {
+  clearInterval(restTimer);
+  const s = SESSION || { log: [], prs: [], start: Date.now() };
+  const mins = Math.round((Date.now() - s.start) / 60000);
+  const work = s.log.reduce((a, l) => a + l.dur, 0);
+  const n = whatsNext();
+  const byEx = {};
+  s.log.forEach(l => { (byEx[l.ex] = byEx[l.ex] || []).push(l); });
+  say(['nice_work', 'n_' + s.log.length, s.log.length === 1 ? 'set_complete' : 'sets_complete', s.prs.length ? 'new_record' : null],
+    ['Nice work!', `${s.log.length} ${s.log.length === 1 ? 'set' : 'sets'} complete.`].concat(s.prs.length ? ['And a new record!'] : []));
+  screen(`<h1>Nice work 💪</h1>
+    <div class="row"><div class="card center"><div class="big">${s.log.length}</div><div class="dim">sets</div></div><div class="card center"><div class="big">${mins}</div><div class="dim">minutes</div></div><div class="card center"><div class="big">${Math.round(work / 60)}</div><div class="dim">min of muscle work</div></div></div>
+    ${s.xp ? (() => { const lv = levelFor(xpTotal()); return `<div class="card" style="display:flex;align-items:center;gap:20px"><div style="font-size:40px;font-weight:800;color:#ffd166">+${s.xp} XP</div><div style="flex:1"><b>Level ${lv.L} · ${esc(lv.title)}</b>${levelBar(lv)}<div class="dim">${lv.need - lv.into} XP to level ${lv.L + 1}</div></div></div>`; })() : ''}
+    ${s.prs.length ? `<div class="card"><h3>Records</h3>${s.prs.map(p => `<div>🏆 ${esc(p)}</div>`).join('')}</div>` : ''}
+    <div class="card">${Object.entries(byEx).map(([k, v]) => `<div class="exrow"><span class="n">${esc(k)}</span><span>${v.map(l => `${l.weight == null ? '' : +l.weight.toFixed(1) + '×'}${l.reps}`).join(' · ')}</span></div>`).join('')}</div>
+    <div class="card"><b>This week: ${n.totD} of ${n.totQ} sets</b> · <span class="${n.pace.cls}">${n.pace.text}</span></div>
+    <button class="go" id="h" style="width:100%">Done</button>`, { yes: close });
+  function close() { SESSION = null; LS.set('session', null); CUR = null; flush(); voiceStop(); vlog('', 'mic released after session'); home(); }   // tap the mic to listen again
+  on('h', close);
+}
+
+// ---------- self-update: check for a newer version when the app opens or comes back ----------
+let UPDATE_READY = null;
+async function checkUpdate() {
+  try {
+    const v = (await (await fetch('../version.json?t=' + Date.now(), { cache: 'no-store' })).json()).version;
+    if (!v) return;
+    if (!APP_VERSION) { APP_VERSION = v; return; }   // first check after load: remember what we're running
+    if (v === APP_VERSION) return;
+    UPDATE_READY = v;
+    if (!(sessionAlive() && SESSION.log.length) && !NOTE && /Good (morning|afternoon|evening)|Connect|Loading/.test($app.textContent)) applyUpdate();
+  } catch {}
+}
+function applyUpdate() { if (UPDATE_READY) location.replace(location.pathname + '?v=' + UPDATE_READY + location.hash); }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+checkUpdate();
+
+// ---------- start ----------
+setSync(); flush();
+if (CFG) loadState(true).then(() => { if (!$app.innerHTML || /Loading/.test($app.innerHTML)) home(); });
+home();
