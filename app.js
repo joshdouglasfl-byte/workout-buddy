@@ -47,6 +47,7 @@ let S = LS.get('state', null);      // last state from the sheet
 let outbox = LS.get('outbox', []);  // rows not yet saved to the sheet
 let local = LS.get('local', { tempoChecked: {}, lastSideFlip: 0 });
 let lastLoad = 0;
+let LAST_ERR = '';                   // last sync error, shown in Settings > About
 let SERVER_OLD = false;              // true until the people-aware sheet script is deployed
 
 async function api(body) {
@@ -60,9 +61,9 @@ async function loadState(quiet) {
   try {
     const st = await api({ action: 'state' });
     if (!st.person && PERSON !== 'Josh') { SERVER_OLD = true; setSync(); return; }   // script not updated yet: never save her data as Josh's
-    SERVER_OLD = !st.person; S = st; LS.set('state', S); lastLoad = Date.now(); setSync(); if (!quiet) toast('Plan loaded'); flush();
+    SERVER_OLD = !st.person; LAST_ERR = ''; S = st; LS.set('state', S); lastLoad = Date.now(); setSync(); if (!quiet) toast('Plan loaded'); flush();
   }
-  catch (e) { setSync('offline'); if (!quiet) toast('Could not reach the sheet, using saved copy'); }
+  catch (e) { LAST_ERR = `${new Date().toLocaleTimeString()} load: ${e.message}`; setSync('offline'); if (!quiet) toast('Could not reach the sheet: ' + e.message); }
 }
 function queue(sheet, row, lazy) { outbox.push({ sheet, row }); LS.set('outbox', outbox); setSync(); if (!lazy) flush(); }
 let flushing = false;
@@ -93,7 +94,7 @@ async function flush() {
       LS.set('outbox', outbox); LS.set('state', S);
     }
     setSync();
-  } catch (e) { setSync('offline'); }
+  } catch (e) { LAST_ERR = `${new Date().toLocaleTimeString()} save: ${e.message}`; setSync('offline'); }
   flushing = false;
 }
 setInterval(flush, 30000);
@@ -954,6 +955,12 @@ function settingsView() {
       <button id="refresh" style="text-align:left">🔄 Reload plan<br><span class="dim" style="font-size:18px">Fetch the latest from your sheet</span></button>
       ${PERSON === 'Josh' && CFG ? `<button id="share" style="text-align:left">👩 Michelle's setup link<br><span class="dim" style="font-size:18px">Send it to her iPad to connect her app</span></button>` : ''}
     </div>
+    <div class="card"><h3>About</h3><div class="dim" style="font-size:18px;line-height:1.6">
+      App version <b>${esc(APP_VERSION || 'checking…')}</b> · ${esc(PERSON)}<br>
+      Sheet script: <b>${!S ? 'not loaded yet' : S.person ? 'up to date (people-aware)' : 'old version, needs redeploy'}</b><br>
+      Last plan load: ${lastLoad ? new Date(lastLoad).toLocaleString() : 'not this session'} · Waiting to save: ${outbox.length}<br>
+      Last problem: ${LAST_ERR ? '<b>' + esc(LAST_ERR) + '</b>' : 'none'}
+    </div></div>
     <button class="mt" id="back" style="width:100%">Back</button>`);
   on('ex', () => pickExercise(settingsView));
   on('body', () => bodyView());
