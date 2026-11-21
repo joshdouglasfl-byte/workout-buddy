@@ -61,10 +61,43 @@ async function loadState(quiet) {
   try {
     const st = await api({ action: 'state' });
     if (!st.person && PERSON !== 'Josh') { SERVER_OLD = true; setSync(); return; }   // script not updated yet: never save her data as Josh's
-    SERVER_OLD = !st.person; LAST_ERR = ''; S = st; LS.set('state', S); lastLoad = Date.now(); setSync(); if (!quiet) toast('Plan loaded'); flush();
+    SERVER_OLD = !st.person; LAST_ERR = ''; S = st; LS.set('state', S); lastLoad = Date.now(); setSync(); if (!quiet) toast('Plan loaded'); flush(); loadCoach();
   }
   catch (e) { LAST_ERR = `${new Date().toLocaleTimeString()} load: ${e.message}`; setSync('offline'); if (!quiet) toast('Could not reach the sheet: ' + e.message); }
 }
+// ---------- notes from the trainer (Coach Notes tab, written by Claude) ----------
+const coachDay = d => { const t = parseDate(d); if (!t) return ''; const k = Math.round((new Date().setHours(12, 0, 0, 0) - t.setHours(12, 0, 0, 0)) / 864e5); return k === 0 ? 'today' : k === 1 ? 'yesterday' : t.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); };
+let COACH = LS.get('coach', []);            // [{id, date, msg, from, read}]
+let coachSeen = LS.get('coachRead', []);    // ids marked read here; re-sent until the sheet shows Read
+async function loadCoach() {
+  try {
+    const j = await api({ action: 'read', tab: 'Coach Notes', person: PERSON, limit: 30 });
+    COACH = j.rows.filter(r => r.EntryID && r.Message).map(r => ({ id: String(r.EntryID), date: String(r.Date).slice(0, 10), from: String(r.From || 'Trainer'), msg: String(r.Message), read: r.Status === 'Read' || coachSeen.includes(String(r.EntryID)) }));
+    LS.set('coach', COACH);
+    j.rows.filter(r => r.Status !== 'Read' && coachSeen.includes(String(r.EntryID))).forEach(r => api({ action: 'update', tab: 'Coach Notes', id: String(r.EntryID), values: { Status: 'Read' } }).catch(() => {}));
+    coachSeen = coachSeen.filter(id => j.rows.some(r => String(r.EntryID) === id && r.Status !== 'Read')); LS.set('coachRead', coachSeen);
+    if (SCREEN_IS_HOME && !NOTE) home();
+  } catch (e) {}
+}
+function coachRead(id) {
+  const n = COACH.find(x => x.id === id); if (n) n.read = true; LS.set('coach', COACH);
+  if (!coachSeen.includes(id)) coachSeen.push(id); LS.set('coachRead', coachSeen);
+  api({ action: 'update', tab: 'Coach Notes', id, values: { Status: 'Read' } }).then(() => { coachSeen = coachSeen.filter(x => x !== id); LS.set('coachRead', coachSeen); }).catch(() => {});
+}
+function coachCard() {
+  const un = COACH.filter(n => !n.read).slice(-2); if (!un.length) return '';
+  return `<div class="card" style="border:2px solid #3ddc84;margin-bottom:12px;padding:14px 22px"><h3 style="margin:0 0 6px">💬 From your trainer</h3>${un.map(n => `<div style="border-top:1px solid #333;padding:10px 0">
+    <div style="font-size:24px;white-space:pre-wrap;line-height:1.35">${esc(n.msg)}</div>
+    <div class="row mt" style="justify-content:flex-end;gap:12px"><span class="dim" style="flex:1;font-size:18px">${esc(coachDay(n.date))}</span><button class="sm" data-creply="1">Reply</button><button class="sm go" data-cread="${esc(n.id)}">Got it</button></div></div>`).join('')}</div>`;
+}
+function coachView() {
+  const ns = COACH.slice().reverse();
+  screen(`<div style="position:relative"><button class="topback" id="back2" data-say="back" style="top:0">‹ Back</button><h2>📬 Trainer notes</h2></div>
+    <div class="card">${ns.length ? ns.map(n => `<div class="exrow" style="display:block"><div style="font-size:22px;white-space:pre-wrap">${esc(n.msg)}</div><div class="dim" style="font-size:18px">${esc(n.from)} · ${esc(coachDay(n.date))}</div></div>`).join('') : '<p class="dim">No notes yet. Your trainer’s replies show up here and on the home screen.</p>'}</div>
+    <div class="row mt"><button class="go" id="creply">💬 Reply to my trainer</button><button id="back" style="flex:1">Back</button></div>`);
+  on('back', settingsView); on('back2', settingsView); on('creply', () => openNote('trainer'));
+}
+
 function queue(sheet, row, lazy) { outbox.push({ sheet, row }); LS.set('outbox', outbox); setSync(); if (!lazy) flush(); }
 let flushing = false;
 async function flush() {
@@ -730,7 +763,7 @@ function home() {
       .tile b{display:block;font-size:40px;line-height:1.1}
       .tile span{color:var(--dim);font-size:18px}
     </style>
-    <div class="hero" id="heroWk" style="cursor:pointer">
+    ${coachCard()}<div class="hero" id="heroWk" style="cursor:pointer">
       <svg width="150" height="150" viewBox="0 0 210 210" style="flex:0 0 150px">
         <circle cx="105" cy="105" r="${R}" stroke="rgba(255,255,255,.12)" stroke-width="18" fill="none"/>
         <circle id="ring" class="ring" cx="105" cy="105" r="${R}" stroke="${pct >= 100 ? '#ffd166' : '#3ddc84'}" stroke-width="18" fill="none" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C}" transform="rotate(-90 105 105)"/>
@@ -761,6 +794,8 @@ function home() {
   document.getElementById('stTile').onclick = streaksView;
   document.getElementById('bodyTile').onclick = () => bodyView();
   document.getElementById('lvTile').onclick = levelsView;
+  document.querySelectorAll('[data-cread]').forEach(b => b.onclick = () => { coachRead(b.dataset.cread); toast('Got it'); home(); });
+  document.querySelectorAll('[data-creply]').forEach(b => b.onclick = () => openNote('trainer'));
 }
 
 // ---------- levels (XP) ----------
@@ -952,6 +987,7 @@ function settingsView() {
       <button id="body" style="text-align:left">🧍 Body map<br><span class="dim" style="font-size:18px">Mark areas good, sore or hurt</span></button>
       <button id="talk" style="text-align:left">🔊 Voice prompts: ${LS.get('talk', true) ? 'on' : 'off'}<br><span class="dim" style="font-size:18px">Whether the app talks to you</span></button>
       <button id="pickv" style="text-align:left">🗣️ Choose voice<br><span class="dim" style="font-size:18px">The voice used for prompts</span></button>
+      <button id="coach" style="text-align:left">📬 Trainer notes<br><span class="dim" style="font-size:18px">Everything your trainer has sent you</span></button>
       <button id="refresh" style="text-align:left">🔄 Reload plan<br><span class="dim" style="font-size:18px">Fetch the latest from your sheet</span></button>
       ${PERSON === 'Josh' && CFG ? `<button id="share" style="text-align:left">👩 Michelle's setup link<br><span class="dim" style="font-size:18px">Send it to her iPad to connect her app</span></button>` : ''}
     </div>
@@ -967,6 +1003,7 @@ function settingsView() {
   on('talk', () => { LS.set('talk', !LS.get('talk', true)); settingsView(); });
   on('pickv', voicePicker);
   on('refresh', async () => { await loadState(); toast('Plan reloaded'); settingsView(); });
+  on('coach', coachView);
   on('share', async () => {
     const link = new URL('../michelle/', location.href).href + '#setup=' + btoa(JSON.stringify({ url: CFG.url, key: CFG.key })).replace(/\+/g, '-').replace(/\//g, '_');
     try { if (navigator.share) { await navigator.share({ title: 'Workout Buddy for Michelle', url: link }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
