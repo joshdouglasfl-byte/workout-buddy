@@ -21,3 +21,14 @@ Home-gym workout app for Josh and Michelle. Follow the `josh-app-dev` skill for 
 - Coach Notes tab (Date, Time, Person, From, Message, Status New/Read, EntryID): the trainer's messages, shown as a "From your trainer" card on home (unread only, last 2) with Got it (generic update Status = Read; ids kept in `wb.<Person>.coachRead` and re-sent until the sheet shows Read) and Reply (opens the trainer note). Settings > Trainer notes lists them all. Loaded after each `state` load.
 - Michelle's trainer and dietitian run in Josh's Claude for now (workout-trainer skill, michelle-dietitian skill); her replies go out as Coach Notes.
 - `changelog.json` + Settings > About > What's new (dot on the gear until read; `newsSeen`/`latestNews`). Seeded from git log on 2026-11-21; entries before version.json existed (Nov 18-19) use the date as their version.
+
+## Security (2026-11-24; needs one redeploy + new keys)
+Same model as Food Log (see its CLAUDE.md Security section).
+- Keys only in Script Properties `KEYS` {key: {p: person, t: made}}; the person comes from the key (request `person` ignored). Old `KEY` / `FALLBACK_KEY` accepted until `dropOldKeys()` sets `LEGACY_OFF` (then blank FALLBACK_KEY at the next redeploy). No key = refused.
+- Generic actions limited to `GENERIC_TABS` (read/update Coach Notes, append Feedback, no delete); per-person rows only; Person stamped and never changeable. Formula guard as in Food Log.
+- App: `<meta name="referrer" content="no-referrer">` on every page; `state` person different from the page's person = load refused with a message (never shows or saves the other person's data).
+
+### Rotate keys (also the first-time setup)
+1. script.google.com/d/1fkLA4Vdm6ADWtL5yXShb7KZQmm4DbPHyCj1pUARok6aL2vVrud99B4N8/edit > select `newKeys` > Run; the Execution log shows each person's `#setup=` link.
+2. On each iPad/iPhone: open the link in Safari, delete the old Home Screen icon, Share > Add to Home Screen.
+3. When every device works: Run `dropOldKeys`.

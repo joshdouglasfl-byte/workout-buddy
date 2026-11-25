@@ -60,7 +60,8 @@ async function loadState(quiet) {
   if (!CFG) return;
   try {
     const st = await api({ action: 'state' });
-    if (!st.person && PERSON !== 'Josh') { SERVER_OLD = true; setSync(); return; }   // script not updated yet: never save her data as Josh's
+    if (!st.person && PERSON !== 'Josh') { SERVER_OLD = true; setSync(); return; }
+    if (st.person && st.person !== PERSON) { LAST_ERR = `This page's key belongs to ${st.person}. Open ${PERSON}'s own setup link.`; setSync('off'); toast(LAST_ERR); return; }   // never show or save one person's data on the other's page   // script not updated yet: never save her data as Josh's
     SERVER_OLD = !st.person; LAST_ERR = ''; S = st; LS.set('state', S); lastLoad = Date.now(); setSync(); if (!quiet) toast('Plan loaded'); flush(); loadCoach();
   }
   catch (e) { LAST_ERR = `${new Date().toLocaleTimeString()} load: ${e.message}`; setSync('offline'); if (!quiet) toast('Could not reach the sheet: ' + e.message); }

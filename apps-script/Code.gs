@@ -1,6 +1,9 @@
 // Workout Buddy: connection between the app and the Workout Buddy Google Sheet.
 // Deployed as a web app (Execute as: me, Who has access: Anyone).
-// The key lives only in the deployed copy (FALLBACK_KEY or Script Property KEY); this public copy holds no secrets.
+// Keys never live in this repo. Script Properties, made by running newKeys() from the editor:
+//   KEYS  {"<key>": {"p": "Josh", "t": "<made>"}}: the person comes from the key, never from the request.
+//   KEY / FALLBACK_KEY: the old shared key, still accepted until dropOldKeys() runs (sets LEGACY_OFF).
+// Rotate: newKeys() -> open the new setup links on each device -> dropOldKeys(). No key configured = every call refused.
 //
 // People: every per-person tab (Sets, Events, Progress, Plan, Feedback, Exercise Overrides) has a Person column.
 // A blank Person means Josh (rows from before Michelle joined). Settings rows with a blank Person apply to everyone;
@@ -13,6 +16,10 @@ const ID_COL = { Sets: 18, Events: 8, Progress: 5 };   // column that holds each
 const WIDTH = { Sets: 18, Events: 8, Progress: 5 };    // columns before Person
 const TZ = 'America/New_York';
 const DEFAULT_PERSON = 'Josh';
+const PEOPLE = ['Josh', 'Michelle'];
+const APP_URL = 'https://joshdouglasfl-byte.github.io/workout-buddy/';
+// Generic actions only reach these tabs (per-person tabs: only the caller's rows)
+const GENERIC_TABS = { read: ['Coach Notes'], append: ['Feedback'], update: ['Coach Notes'], delete: [] };
 
 function doGet(e) { return handle_(e.parameter || {}); }
 function doPost(e) {
@@ -21,15 +28,57 @@ function doPost(e) {
   return handle_(p);
 }
 
+// ---------- keys ----------
+function keyMap_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('KEYS') || '{}'); } catch (e) { return {}; }
+}
+/** -> person, or '' when the key is wrong. Fails closed. */
+function auth_(p) {
+  const k = String(p.key || ''); if (!k) return '';
+  const o = keyMap_()[k];
+  if (o && PEOPLE.indexOf(o.p) >= 0) return o.p;
+  const props = PropertiesService.getScriptProperties();
+  const old = props.getProperty('KEY') || FALLBACK_KEY;
+  if (old && !props.getProperty('LEGACY_OFF') && k === old) {
+    const want = p.person || DEFAULT_PERSON;
+    return PEOPLE.indexOf(want) >= 0 ? want : '';
+  }
+  return '';
+}
+function newKey_() { return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ''); }   // 64 hex chars
+/** Run from the editor: adds a fresh key for each person (old keys keep working) and logs each person's setup link. */
+function newKeys() {
+  const props = PropertiesService.getScriptProperties(), t = new Date().toISOString();
+  const keys = keyMap_(), url = ScriptApp.getService().getUrl();
+  PEOPLE.forEach(person => {
+    const k = newKey_(); keys[k] = { p: person, t: t };
+    const blob = Utilities.base64EncodeWebSafe(JSON.stringify({ url: url, key: k })).replace(/=+$/, '');
+    Logger.log(`${person} setup link (open on each of ${person}'s devices, then Add to Home Screen):\n${APP_URL}${person.toLowerCase()}/#setup=${blob}`);
+  });
+  props.setProperty('KEYS', JSON.stringify(keys));
+}
+/** Run from the editor once every device uses the new links: keeps each person's newest key and turns the old shared key off. */
+function dropOldKeys() {
+  const props = PropertiesService.getScriptProperties(), m = keyMap_(), newest = {};
+  Object.keys(m).forEach(k => { const o = m[k]; if (!newest[o.p] || o.t > m[newest[o.p]].t) newest[o.p] = k; });
+  const keep = {}; Object.keys(newest).forEach(person => { keep[newest[person]] = m[newest[person]]; });
+  props.setProperty('KEYS', JSON.stringify(keep));
+  props.deleteProperty('KEY'); props.setProperty('LEGACY_OFF', '1');
+  Logger.log('Old keys off. Kept: ' + Object.values(keep).map(o => o.p + ' ' + o.t).join(', ') + '. You can also blank FALLBACK_KEY in the code.');
+}
+
 function handle_(p) {
-  const key = PropertiesService.getScriptProperties().getProperty('KEY') || FALLBACK_KEY;
-  if (!key || p.key !== key) return out_({ ok: false, error: 'bad key' });
+  const person = auth_(p);
+  if (!person) return out_({ ok: false, error: 'bad key' });
+  p.person = person;
+  if (p.tab && GENERIC_TABS[p.action] && GENERIC_TABS[p.action].indexOf(p.tab) < 0) return out_({ ok: false, error: 'tab not allowed' });
+  if (p.action === 'delete') return out_({ ok: false, error: 'tab not allowed' });
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const person = p.person || DEFAULT_PERSON;
   try {
     if (p.action === 'ping') return out_({ ok: true, now: new Date().toISOString() });
     if (p.action === 'state') return out_(Object.assign({ ok: true, person: person }, state_(ss, person)));
     // generic actions (rows as objects keyed by header): new features use these, so the script rarely needs redeploying
+    if ((p.action === 'read' || p.action === 'update') && GENERIC_TABS[p.action].indexOf(p.tab) < 0) return out_({ ok: false, error: 'tab not allowed' });
     if (p.action === 'read') return out_(gRead_(ss, p));
     if (p.action === 'append' && p.tab) return out_(gAppend_(ss, p));
     if (p.action === 'update') return out_(gUpdate_(ss, p));
@@ -110,7 +159,7 @@ function append_(ss, name, rows, person) {
       sh.getRange(from, idc, last - from + 1, 1).getValues().forEach(r => { if (r[0]) have.add(String(r[0])); });
     }
     fresh = rows.filter(r => r.length === w && r[w - 1] && !have.has(String(r[w - 1])));
-    if (fresh.length) sh.getRange(last + 1, 1, fresh.length, w + 1).setValues(fresh.map(r => r.concat([person])));
+    if (fresh.length) sh.getRange(last + 1, 1, fresh.length, w + 1).setValues(fresh.map(r => safeRow_(r).concat([person])));
     result = { added: fresh.length, skipped: rows.length - fresh.length };
   } finally {
     lock.releaseLock();
@@ -150,11 +199,11 @@ function updateExercise_(ss, exercise, field, value, person) {
   const vals = sh.getDataRange().getValues();
   for (let r = 1; r < vals.length; r++) {
     if (who_(vals[r][0]) === person && vals[r][1] === exercise && vals[r][2] === field) {
-      sh.getRange(r + 1, 4, 1, 2).setValues([[value, now_()]]);
+      sh.getRange(r + 1, 4, 1, 2).setValues([[safe_(value), now_()]]);
       return { updated: true };
     }
   }
-  sh.appendRow([person, exercise, field, value, now_(), 'xo-' + Utilities.getUuid().slice(0, 8)]);
+  sh.appendRow(safeRow_([person, exercise, field, value, now_(), 'xo-' + Utilities.getUuid().slice(0, 8)]));
   return { updated: true };
 }
 
@@ -182,15 +231,27 @@ function gAddCols_(s, h, keys) {
   });
   return h;
 }
+/** Typed text is stored as text: a value starting with = + @ (or - not followed by a number) would otherwise run as a formula. */
+function safe_(v) { return typeof v === 'string' && /^(=|\+|@|-(?![\d.]))/.test(v) ? "'" + v : v; }
+const safeRow_ = row => row.map(safe_);
+/** Row r (1-based) belongs to person, or the tab has no Person column. Blank Person = Josh. */
+function ownsRow_(s, r, person) {
+  const pi = gHeader_(s).indexOf('Person'); if (pi < 0) return true;
+  return who_(s.getRange(r, pi + 1).getValue()) === person;
+}
+// A formula must be sent as {f: '=...'} ("{r}" becomes the row); formulas that reach the web are refused.
 function gCell_(v, r) {
-  if (typeof v === 'string' && v.charAt(0) === '=') return v.replace(/\{r\}/g, r);
-  return v === null || v === undefined ? '' : v;
+  if (v && typeof v === 'object' && typeof v.f === 'string' && v.f.charAt(0) === '=') {
+    if (/IMPORT|IMAGE|HYPERLINK|WEBSERVICE/i.test(v.f)) throw new Error('formula not allowed');
+    return v.f.replace(/\{r\}/g, r);
+  }
+  return v === null || v === undefined ? '' : safe_(v);
 }
 
 /** read: {tab, person?, limit?} -> rows as objects (display text). A blank Person counts as Josh. */
 function gRead_(ss, p) {
   let rows = table_(ss, p.tab);
-  if (p.person && rows.length && 'Person' in rows[0]) rows = mine_(rows, p.person);
+  if (rows.length && 'Person' in rows[0]) rows = mine_(rows, p.person);
   if (p.limit) rows = rows.slice(-p.limit);
   return { ok: true, rows: rows };
 }
@@ -202,6 +263,7 @@ function gAppend_(ss, p) {
   try {
     const s = gSheet_(ss, p.tab, p.headers || Object.keys(rows[0]));
     const h = gAddCols_(s, gHeader_(s), [...new Set(rows.flatMap(Object.keys))]);
+    if (h.indexOf('Person') >= 0) rows.forEach(o => { o.Person = p.person; });
     const ic = gIdCol_(h);
     const have = ic >= 0 && s.getLastRow() > 1 ? new Set(s.getRange(2, ic + 1, s.getLastRow() - 1, 1).getValues().flat().map(String)) : new Set();
     let r = s.getLastRow() + 1, added = 0;
@@ -219,8 +281,9 @@ function gUpdate_(ss, p) {
   const s = gSheet_(ss, p.tab); let h = gHeader_(s); const ic = gIdCol_(h);
   if (ic < 0) throw new Error('tab has no ID column');
   const hit = s.getRange(2, ic + 1, Math.max(s.getLastRow() - 1, 1), 1).createTextFinder(String(p.id)).matchEntireCell(true).findNext();
-  if (!hit) return { ok: false, error: 'not found' };
+  if (!hit || !ownsRow_(s, hit.getRow(), p.person)) return { ok: false, error: 'not found' };
   const r = hit.getRow();
+  if ('Person' in (p.values || {})) return { ok: false, error: 'Person cannot be changed' };
   h = gAddCols_(s, h, Object.keys(p.values || {}));
   Object.keys(p.values || {}).forEach(k => s.getRange(r, h.indexOf(k) + 1).setValue(gCell_(p.values[k], r)));
   return { ok: true };

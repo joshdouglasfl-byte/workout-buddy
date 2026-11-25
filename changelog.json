@@ -1,6 +1,14 @@
 {
  "entries": [
   {
+   "date": "2026-11-24",
+   "version": "20261124200000",
+   "items": [
+    "Safer links: the app no longer tells other sites which page you came from",
+    "A page now warns you if it was opened with someone else's setup link"
+   ]
+  },
+  {
    "date": "2026-11-21",
    "version": "20261121170952",
    "items": [
