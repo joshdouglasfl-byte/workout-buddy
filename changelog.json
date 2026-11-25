@@ -2,10 +2,11 @@
  "entries": [
   {
    "date": "2026-11-24",
-   "version": "20261124200000",
+   "version": "20261124202000",
    "items": [
     "Safer links: the app no longer tells other sites which page you came from",
-    "A page now warns you if it was opened with someone else's setup link"
+    "A page now warns you if it was opened with someone else's setup link",
+    "New device: the Connect page now takes your whole setup link; paste it once and you're in (iPad drops the key when it saves the icon)"
    ]
   },
   {

@@ -32,11 +32,17 @@ const HOUR = 3600e3, DAY = 24 * HOUR;
 function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2500); }
 
 // ---------- config & setup link ----------
+// a setup link (or just its #setup=... part) -> {url, key}, or null
+function parseSetup(text) {
+  const m = String(text || '').match(/#setup=([A-Za-z0-9_\-+/=]+)/); if (!m) return null;
+  try { const cfg = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))); return cfg.url && cfg.key ? { url: cfg.url, key: cfg.key } : null; } catch { return null; }
+}
 (function readSetupHash() {
   const h = location.hash;
   if (h.startsWith('#setup=')) {
-    try { const cfg = JSON.parse(atob(h.slice(7).replace(/-/g, '+').replace(/_/g, '/'))); if (cfg.url && cfg.key) LS.set('cfg', cfg); } catch {}
-    // keep the link in Safari so "Add to Home Screen" carries it; clear it once running from the Home Screen
+    const cfg = parseSetup(h); if (cfg) LS.set('cfg', cfg);
+    // keep the link in Safari; clear it once running from the Home Screen (iOS drops the #part when it saves a web app,
+    // so a new Home Screen app starts on the Connect page: paste the whole setup link there once)
     if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) history.replaceState(null, '', location.pathname);
   }
 })();
@@ -719,10 +725,14 @@ function on(id, fn) { const el = document.getElementById(id); if (el) el.onclick
 
 function showSetup() {
   screen(`<h1>Connect to your sheet</h1>
-  <p class="dim">Open the setup link Claude gave you on this iPad, or paste the two values here.</p>
-  <div class="card"><h3>Web app URL</h3><input id="u" placeholder="https://script.google.com/macros/s/…/exec"><h3 class="mt">Key</h3><input id="k"></div>
+  <p class="dim">Paste your whole setup link here (copy it on the Mac, then Paste on this device).</p>
+  <div class="card"><h3>Setup link</h3><input id="u" placeholder="https://joshdouglasfl-byte.github.io/workout-buddy/…#setup=…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"><div id="uerr" class="dim mt"></div></div>
   <button class="go" id="save" style="width:100%">Connect</button>`);
-  on('save', async () => { CFG = { url: document.getElementById('u').value.trim(), key: document.getElementById('k').value.trim() }; LS.set('cfg', CFG); await loadState(); home(); });
+  on('save', async () => {
+    const cfg = parseSetup(document.getElementById('u').value);
+    if (!cfg) { document.getElementById('uerr').textContent = 'That isn’t a complete setup link. Copy the whole line again (it’s long) and paste it here.'; return; }
+    CFG = cfg; LS.set('cfg', CFG); await loadState(); home();
+  });
 }
 
 // ---------- home: the launch pad ----------

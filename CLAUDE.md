@@ -30,5 +30,5 @@ Same model as Food Log (see its CLAUDE.md Security section).
 
 ### Rotate keys (also the first-time setup)
 1. script.google.com/d/1fkLA4Vdm6ADWtL5yXShb7KZQmm4DbPHyCj1pUARok6aL2vVrud99B4N8/edit > select `newKeys` > Run; the Execution log shows each person's `#setup=` link.
-2. On each iPad/iPhone: open the link in Safari, delete the old Home Screen icon, Share > Add to Home Screen.
+2. On each iPad/iPhone: delete the old Home Screen icon, open the link in Safari, Share > Add to Home Screen, then open the new icon: it shows Connect (iOS drops the #setup part when saving the web app), paste the whole setup link there once (`parseSetup`). Get links to devices by Universal Clipboard or AirDrop.
 3. When every device works: Run `dropOldKeys`.
