@@ -29,6 +29,6 @@ Same model as Food Log (see its CLAUDE.md Security section).
 - App: `<meta name="referrer" content="no-referrer">` on every page; `state` person different from the page's person = load refused with a message (never shows or saves the other person's data).
 
 ### Rotate keys (also the first-time setup)
-1. script.google.com/d/1fkLA4Vdm6ADWtL5yXShb7KZQmm4DbPHyCj1pUARok6aL2vVrud99B4N8/edit > select `newKeys` > Run; the Execution log shows each person's `#setup=` link.
+1. script.google.com/d/1fkLA4Vdm6ADWtL5yXShb7KZQmm4DbPHyCj1pUARok6aL2vVrud99B4N8/edit > (first time: Project Settings > Script Properties > `WEB_APP_URL` = the Web app URL from Deploy > Manage deployments; `getUrl()` gives /dev from the editor) > select `newKeys` > Run; the Execution log shows each person's `#setup=` link.
 2. On each iPad/iPhone: delete the old Home Screen icon, open the link in Safari, Share > Add to Home Screen, then open the new icon: it shows Connect (iOS drops the #setup part when saving the web app), paste the whole setup link there once (`parseSetup`). Get links to devices by Universal Clipboard or AirDrop.
 3. When every device works: Run `dropOldKeys`.

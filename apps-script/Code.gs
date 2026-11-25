@@ -49,7 +49,14 @@ function newKey_() { return (Utilities.getUuid() + Utilities.getUuid()).replace(
 /** Run from the editor: adds a fresh key for each person (old keys keep working) and logs each person's setup link. */
 function newKeys() {
   const props = PropertiesService.getScriptProperties(), t = new Date().toISOString();
-  const keys = keyMap_(), url = ScriptApp.getService().getUrl();
+  // The deployed web app URL (Deploy > Manage deployments > Web app URL), saved once as Script Property WEB_APP_URL.
+  // Not ScriptApp.getService().getUrl(): run from the editor it gives the /dev test URL, which the app can't reach.
+  const url = String(props.getProperty('WEB_APP_URL') || '').trim();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) {
+    Logger.log('No keys made. Add Script Property WEB_APP_URL = the Web app URL from Deploy > Manage deployments (ends in /exec), then run newKeys again.');
+    return;
+  }
+  const keys = keyMap_();
   PEOPLE.forEach(person => {
     const k = newKey_(); keys[k] = { p: person, t: t };
     const blob = Utilities.base64EncodeWebSafe(JSON.stringify({ url: url, key: k })).replace(/=+$/, '');
